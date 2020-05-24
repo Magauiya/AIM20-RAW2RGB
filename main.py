@@ -21,7 +21,7 @@ from omegaconf import DictConfig
 
 # my files
 import loss
-from dataloader import *
+from dataloader import LoadData
 from model import UNet as model
 
 class ImageProcessor:
@@ -132,9 +132,26 @@ class ImageProcessor:
                 print("[!] NO checkpoint found at '{}'".format(self.cfg.resume))
 
     def _load_data(self):
-		# WIP
-    	pass
-    	
+		train_dataset = LoadData(os.path.join(self.cfg.data_dir, "Trainset"), TRAIN_SIZE, test=False)
+		self.train_loader = DataLoader(
+										dataset = train_dataset, 
+										batch_size=self.cfg.batch_size, 
+										shuffle=True, 
+										num_workers=self.cfg.num_workers,
+		                          		pin_memory=True, 
+		                          		drop_last=True
+		                          		)
+
+		valid_dataset = LoadData(os.path.join(self.cfg.data_dir, "Validset"), TRAIN_SIZE, test=True)
+		self.valid_loader = DataLoader(
+										dataset = valid_dataset, 
+										batch_size=self.cfg.batch_size, 
+										shuffle=True, 
+										num_workers=self.cfg.num_workers,
+		                          		pin_memory=True, 
+		                          		drop_last=True
+		                          		)
+
 
     def _make_dir(self):
         # Output path: ckpts, imgs, etc.

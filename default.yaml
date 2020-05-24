@@ -1,6 +1,5 @@
 parameters:
   resume: None
-  img_size: 224
   num_epochs: 100
   batch_size: 64
   num_workers: 12
@@ -12,3 +11,5 @@ parameters:
   exp_name: "mvp_baseline"
   output_path: "./output"
   loss: "1.0*L1"
+
+
