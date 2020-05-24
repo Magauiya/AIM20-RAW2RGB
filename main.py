@@ -5,6 +5,7 @@ import random
 import numpy as np
 from sklearn import metrics
 
+# PyTorch
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -13,18 +14,15 @@ from torch.optim import lr_scheduler
 from torch.utils.data import Dataset
 from torch.utils.tensorboard import SummaryWriter
 
-from dataloader import *
-from model import UNet as model
-
 # Hydra <- yaml
 import hydra
-from hydra import utils
-from losses import loss 
+from hydra import utils 
 from omegaconf import DictConfig
 
-
-torch.backends.cudnn.deterministic = True
-
+# my files
+import loss
+from dataloader import *
+from model import UNet as model
 
 class ImageProcessor:
     def __init__(self, cfg):
@@ -35,7 +33,7 @@ class ImageProcessor:
 
 
     def build(self):
-        self.criterion = loss(self.cfg.loss)
+        self.criterion = loss.Loss(self.cfg.loss)
         self.model = model().to(self.device)
         self.model = nn.DataParallel(self.model)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr)
@@ -106,6 +104,7 @@ class ImageProcessor:
             self.writer.add_scalar("PSNR/Validation", epoch_psnr)
 
     def test(self):
+    	# [WIP]
         pass
     
     def _save_ckpt(self, epoch, save_file):
@@ -133,37 +132,9 @@ class ImageProcessor:
                 print("[!] NO checkpoint found at '{}'".format(self.cfg.resume))
 
     def _load_data(self):
-        
-        AUGMENTATIONS_TRAIN = transforms.Compose([
-                                        transforms.RandomVerticalFlip(p=0.5),
-                                        transforms.RandomHorizontalFlip(p=0.5),
-                                        transforms.ToTensor() 
-                                        ])
-
-        AUGMENTATIONS_TEST = transforms.Compose([
-                                        transforms.ToTensor()
-                                        ])
-
-        # TODO: make dataloader
-        train_dataset = RAW2RGBDataset(train_df, self.data_dir, augmentations=AUGMENTATIONS_TRAIN)
-        valid_dataset = RAW2RGBDataset(val_df,   self.data_dir, augmentations=AUGMENTATIONS_TEST)
-        test_dataset = RAW2RGBTestDataset(self.test_df, augmentations=AUGMENTATIONS_TEST)
-
-        self.train_loader = torch.utils.data.DataLoader(train_dataset,
-                                                   batch_size=self.cfg.batch_size,
-                                                   num_workers=self.cfg.num_workers,
-                                                   shuffle=True)
-
-        self.valid_loader = torch.utils.data.DataLoader(valid_dataset,
-                                                   batch_size=self.cfg.batch_size,
-                                                   num_workers=self.cfg.num_workers,
-                                                   shuffle=False)
-        
-        self.test_loader = torch.utils.data.DataLoader(test_dataset,
-                                                  batch_size=1,
-                                                  num_workers=self.cfg.num_workers,
-                                                  shuffle=False,
-                                                  drop_last=False)
+		# WIP
+    	pass
+    	
 
     def _make_dir(self):
         # Output path: ckpts, imgs, etc.
@@ -191,7 +162,9 @@ def main(cfg: DictConfig) -> None:
 	np.random.seed(seed)
 	torch.manual_seed(seed)
 	torch.cuda.manual_seed(seed)
+	torch.backends.cudnn.deterministic = True
 
+	# Build -> Train -> Test
     app = ImageProcessor(cfg.parameters)
     app.build()
     app.train()

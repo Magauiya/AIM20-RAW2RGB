@@ -11,4 +11,4 @@ parameters:
   weight_decay: 0.0001
   exp_name: "mvp_baseline"
   output_path: "./output"
-  loss: "L1"
+  loss: "1.0*L1"
