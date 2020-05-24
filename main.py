@@ -19,18 +19,9 @@ from model import UNet as model
 # Hydra <- yaml
 import hydra
 from hydra import utils
-from omegaconf import DictConfig
 from losses import loss 
+from omegaconf import DictConfig
 
-'''
-seed = 42
-print(f'setting everything to seed {seed}')
-random.seed(seed)
-os.environ['PYTHONHASHSEED'] = str(seed)
-np.random.seed(seed)
-torch.manual_seed(seed)
-torch.cuda.manual_seed(seed)
-'''
 
 torch.backends.cudnn.deterministic = True
 
@@ -63,8 +54,7 @@ class ImageProcessor:
 
             self.model.train()
             running_loss = 0
-            tk0 = tqdm(self.train_loader, total=int(len(self.train_loader)))
-            for noisy, clean in tk0:
+            for noisy, clean in self.train_loader:
             	noisy = noisy.to(self.device)
             	clean = clean.to(self.device)
                 self.optimizer.zero_grad()
@@ -83,13 +73,12 @@ class ImageProcessor:
 
 
 	def evaluate(self, epoch):
-        tk1 = tqdm(self.valid_loader, total=int(len(self.valid_loader)))
         self.model.eval()
         running_loss = 0
         running_psnr = 0
 
         with torch.no_grad():
-            for noisy, clean in tk1:
+            for noisy, clean in self.valid_loader:
                 noisy = noisy.to(self.device)
                 clean = clean.to(self.device)
                 output = self.model(noisy)
@@ -117,7 +106,7 @@ class ImageProcessor:
             self.writer.add_scalar("PSNR/Validation", epoch_psnr)
 
     def test(self):
-        return 0
+        pass
     
     def _save_ckpt(self, epoch, save_file):
         state = {
@@ -157,7 +146,7 @@ class ImageProcessor:
 
         # TODO: make dataloader
         train_dataset = RAW2RGBDataset(train_df, self.data_dir, augmentations=AUGMENTATIONS_TRAIN)
-        valid_dataset = RAW2RGBDataset(val_df.sample(1000).reset_index(drop=True), self.data_dir, augmentations=AUGMENTATIONS_TEST)
+        valid_dataset = RAW2RGBDataset(val_df,   self.data_dir, augmentations=AUGMENTATIONS_TEST)
         test_dataset = RAW2RGBTestDataset(self.test_df, augmentations=AUGMENTATIONS_TEST)
 
         self.train_loader = torch.utils.data.DataLoader(train_dataset,
@@ -195,6 +184,14 @@ class ImageProcessor:
 
 @hydra.main(config_path="./default.yaml")
 def main(cfg: DictConfig) -> None:
+	seed = 42
+	print(f'setting everything to seed {seed}')
+	random.seed(seed)
+	os.environ['PYTHONHASHSEED'] = str(seed)
+	np.random.seed(seed)
+	torch.manual_seed(seed)
+	torch.cuda.manual_seed(seed)
+
     app = ImageProcessor(cfg.parameters)
     app.build()
     app.train()
