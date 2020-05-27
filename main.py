@@ -107,7 +107,7 @@ class ImageProcessor:
             print(f'Val Loss: {epoch_loss:.3}, PSNR:{epoch_psnr:.3}')
             
             ckpt_name = f"epoch_{step}_val_loss_{epoch_loss:.3}_psnr_{epoch_psnr:.3}.pth"
-            self._save_ckpt(epoch, ckpt_name)
+            self._save_ckpt(epoch, step, ckpt_name)
 
             self.writer.add_scalar("Loss/Validation", epoch_loss)
             self.writer.add_scalar("PSNR/Validation", epoch_psnr)
@@ -215,4 +215,3 @@ def main(cfg):
     
 if __name__=="__main__":
     main()
-
