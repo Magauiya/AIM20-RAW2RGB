@@ -4,10 +4,10 @@ import torch.nn.functional as F
 
 from utils import *
 
-class UNet(nn.Module):
-	def __init__(self, n_channels=3):
-		super(UNet, self).__init__():
-		    self.inc = DoubleConv(n_channels, 64)
+class UNET(nn.Module):
+	def __init__(self, cfg):
+		super(UNET, self).__init__():
+		    self.inc = DoubleConv(cfg.in_channel, 64)
 		    self.down1 = Down(64, 128)
 		    self.down2 = Down(128, 256)
 		    self.down3 = Down(256, 512)
@@ -16,7 +16,7 @@ class UNet(nn.Module):
 		    self.up2 = Up(512, 128)
 		    self.up3 = Up(256, 64)
 		    self.up4 = Up(128, 64)
-		    self.outc = OutConv(64, n_channels)
+		    self.outc = OutConv(64, cfg.out_channel)
 
 		def forward(self, x):
 		    x1 = self.inc(x)
@@ -29,5 +29,4 @@ class UNet(nn.Module):
 		    out = self.up3(out, x2)
 		    out = self.up4(out, x1)
 		    out = self.OutConv(out)
-		    out += x                # residual
 		    return out
