@@ -25,7 +25,7 @@ from dataloader import LoadData
 
 class ImageProcessor:
     def __init__(self, cfg):
-    	self.cfg = cfg
+        self.cfg = cfg
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Device: {self.device}")
         print(f"Path: {self.cfg.data_dir}")
@@ -36,7 +36,7 @@ class ImageProcessor:
         model_name = self.cfg.model_name
         
         if model_name not in dir(model):
-            model_name = self.cfg.model_name
+            model_name = "UNET"
         
         print(f"Model choice: {self.cfg.model_name}")
         self.model = getattr(model, model_name)(cfg=self.cfg).to(self.device)
@@ -60,9 +60,9 @@ class ImageProcessor:
 
             self.model.train()
             step_loss = 0 
-            for idx, (im, labels) in enumerate(self.train_loader, start=1):
-            	noisy = noisy.to(self.device, dtype=torch.float)
-            	clean = clean.to(self.device, dtype=torch.float)
+            for idx, (im, clean) in enumerate(self.train_loader, start=1):
+                noisy = noisy.to(self.device, dtype=torch.float)
+                clean = clean.to(self.device, dtype=torch.float)
                 self.optimizer.zero_grad()
                 output = self.model(noisy)
                 loss = self.criterion(output, clean)
@@ -71,8 +71,8 @@ class ImageProcessor:
                 step_loss += loss.item()
                 if idx%self.cfg.verbose_step==0 or idx==1:
                     self.evaluate(tb_iter, epoch)
-                    self.writer.add_scalar("Loss/Train", step_loss/self.cfg.verbose_step, tb_iter)
-                    self.writer.add_scalar("LR/Train", self.lr_sch.get_lr()[0], tb_iter)
+                    self.writer.add_scalar("Train/Loss", step_loss/self.cfg.verbose_step, tb_iter)
+                    self.writer.add_scalar("Train/LR", self.lr_sch.get_lr()[0], tb_iter)
                     print(f'[{tb_iter:3}/{epoch:3}/{idx:4}] Train loss: {loss:.5e}')
                 
                     tb_iter += 1
@@ -91,7 +91,6 @@ class ImageProcessor:
                 output = self.model(noisy)
                 loss = self.criterion(output, clean)
                 running_loss += loss.item()
-                tk1.set_postfix(loss=(loss.item()))
 
                 
                 clean = clean.cpu().detach().numpy()
@@ -109,8 +108,8 @@ class ImageProcessor:
             ckpt_name = f"epoch_{step}_val_loss_{epoch_loss:.3}_psnr_{epoch_psnr:.3}.pth"
             self._save_ckpt(epoch, step, ckpt_name)
 
-            self.writer.add_scalar("Loss/Validation", epoch_loss)
-            self.writer.add_scalar("PSNR/Validation", epoch_psnr)
+            self.writer.add_scalar("Validation/Loss", epoch_loss, step)
+            self.writer.add_scalar("Validation/PSNR", epoch_psnr, step)
         self.model.train()
 
 
