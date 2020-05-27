@@ -1,0 +1,27 @@
+hydra:
+  run:
+    dir: ./output/${parameters.model_name}_${parameters.batch_size}_${parameters.num_epochs}
+
+parameters:
+  data_dir: "/data//"
+  resume: "put ckpt name"
+  ckpt_path: "ckpt"
+  logs_path: "log"
+  loss: "1.0*L1"
+  submission_file: "wip"
+  model_name: "UNET"
+  img_size: 512
+  num_epochs: 100
+  batch_size: 64
+  num_workers: 12
+  lr_init: 1.e-3
+  lr_step: 20
+  lr_gamma: 0.5
+  random_seed: 42
+  verbose_step: 1000
+  requires_grad: True
+  inference: False
+  optim_reset: False
+  in_channel: 4
+  out_channel: 3
+

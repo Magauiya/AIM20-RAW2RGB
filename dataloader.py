@@ -30,8 +30,8 @@ class LoadData(Dataset):
             self.raw_dir = os.path.join(dataset_dir, 'test', 'huawei_raw')
             self.dslr_dir = os.path.join(dataset_dir, 'test', 'canon')
         else:
-            self.raw_dir = os.path.join(dataset_dir, 'huawei_raw')
-            self.dslr_dir = os.path.join(dataset_dir, 'canon')
+            self.raw_dir = os.path.join(dataset_dir, 'train', 'huawei_raw')
+            self.dslr_dir = os.path.join(dataset_dir, 'train', 'canon')
 
         self.test = test
 
