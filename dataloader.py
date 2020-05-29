@@ -4,9 +4,8 @@ import os
 import imageio
 import numpy as np
 import torch
-from scipy import misc
 from torch.utils.data import Dataset
-
+from PIL import Image
 
 def extract_bayer_channels(raw):
     # Reshape the input bayer image
@@ -43,24 +42,28 @@ class LoadData(Dataset):
             raw = np.fliplr(raw)
             rgb = np.fliplr(rgb)
         if np.random.rand() > 0.5:
-            raw = np.flipup(raw)
-            rgb = np.flipup(rgb)
+            raw = np.flipud(raw)
+            rgb = np.flipud(rgb)
+
+        raw = np.copy(raw)
+        rgb = np.copy(rgb)
+
         return raw, rgb
 
     def __getitem__(self, idx):
 
-        raw_image = np.asarray(imageio.imread(os.path.join(self.raw_dir, str(idx) + '.png')))
+        raw_image = np.asarray(imageio.imread(os.path.join(self.raw_dir, str(idx) + '.png')), dtype=np.float32)
         raw_image = extract_bayer_channels(raw_image)
         raw_image = torch.from_numpy(raw_image.transpose((2, 0, 1)))
 
-        dslr_image = misc.imread(os.path.join(self.dslr_dir, str(idx) + ".jpg"))
+        dslr_image = Image.open(os.path.join(self.dslr_dir, str(idx) + ".jpg"))
         dslr_image = np.asarray(dslr_image, dtype=np.float32)
         dslr_image = torch.from_numpy(dslr_image.transpose((2, 0, 1)))
 
         if not self.test:
             raw_image, dslr_image = self._transform(raw_image, dslr_image)
 
-        return raw_image, dslr_image
+        return raw_image, dslr_image / 255.
 
 
 class LoadTestData(Dataset):

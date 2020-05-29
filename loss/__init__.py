@@ -17,7 +17,7 @@ not implemented:
 
 
 class Loss(nn.modules.loss._Loss):
-    def __init__(self, args):
+    def __init__(self, args, device):
         super(Loss, self).__init__()
         print('Preparing loss function:')
 
@@ -47,7 +47,6 @@ class Loss(nn.modules.loss._Loss):
                 print('{:.3f} * {}'.format(l['weight'], l['type']))
                 self.loss_module.append(l['function'])
 
-        device = torch.device('cpu' if args.cpu else 'cuda')
         self.loss_module.to(device)
 
     def forward(self, source, target):
@@ -57,9 +56,9 @@ class Loss(nn.modules.loss._Loss):
                 loss = l['function'](source, target)
                 effective_loss = l['weight'] * loss
                 losses.append(effective_loss)
-                self.log[-1, i] += effective_loss.item()
-            elif l['type'] == 'DIS':
-                self.log[-1, i] += self.loss[i - 1]['function'].loss
+                #self.log[-1, i] += effective_loss.item()
+            #elif l['type'] == 'DIS':
+                #self.log[-1, i] += self.loss[i - 1]['function'].loss
 
         loss_sum = sum(losses)
 

@@ -1,0 +1,5 @@
+torchsummary==1.5.1
+torchvision==0.4.2
+hydra-core==0.11.3
+scipy==1.4.1
+scikit-image==0.17.1

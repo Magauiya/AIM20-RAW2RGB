@@ -4,6 +4,7 @@ import glob
 import random
 import numpy as np
 from sklearn import metrics
+from skimage.measure import compare_psnr as PSNR
 
 # PyTorch
 import torch
@@ -11,7 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import transforms
 from torch.optim import lr_scheduler
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 # Hydra <- yaml
@@ -21,7 +22,9 @@ from omegaconf import DictConfig
 
 # my files
 import loss
+import model
 from dataloader import LoadData
+
 
 class ImageProcessor:
     def __init__(self, cfg):
@@ -32,7 +35,7 @@ class ImageProcessor:
 
 
     def build(self):
-        self.criterion = loss.Loss(self.cfg.loss)
+        self.criterion = loss.Loss(self.cfg, self.device)
         model_name = self.cfg.model_name
         
         if model_name not in dir(model):
@@ -52,6 +55,8 @@ class ImageProcessor:
         
     def train(self):
         tb_iter = self.step
+        # Validation of the loaded ckpt (if it exists) before the training starts
+        self.evaluate(tb_iter-1, self.start_epoch)
 
         # Resume training from stopped epoch
         for epoch in range(self.start_epoch, self.cfg.num_epochs):
@@ -60,7 +65,7 @@ class ImageProcessor:
 
             self.model.train()
             step_loss = 0 
-            for idx, (im, clean) in enumerate(self.train_loader, start=1):
+            for idx, (noisy, clean) in enumerate(self.train_loader, start=1):
                 noisy = noisy.to(self.device, dtype=torch.float)
                 clean = clean.to(self.device, dtype=torch.float)
                 self.optimizer.zero_grad()
@@ -69,7 +74,8 @@ class ImageProcessor:
                 loss.backward()
                 self.optimizer.step()
                 step_loss += loss.item()
-                if idx%self.cfg.verbose_step==0 or idx==1:
+
+                if idx%self.cfg.verbose_step==0:
                     self.evaluate(tb_iter, epoch)
                     self.writer.add_scalar("Train/Loss", step_loss/self.cfg.verbose_step, tb_iter)
                     self.writer.add_scalar("Train/LR", self.lr_sch.get_lr()[0], tb_iter)
@@ -77,7 +83,7 @@ class ImageProcessor:
                 
                     tb_iter += 1
                     step_loss = 0
-
+            self.lr_sch.step()
 
     def evaluate(self, step, epoch):
         self.model.eval()
@@ -97,7 +103,7 @@ class ImageProcessor:
                 output = np.clip(output.cpu().detach().numpy(), 0., 1.)
 
                 # ------------ PSNR ------------
-                for m in range(self.batch_size):
+                for m in range(self.cfg.batch_size):
                 	running_psnr += PSNR(clean[m], output[m])
 
             epoch_loss = running_loss / len(self.valid_loader)
@@ -118,7 +124,7 @@ class ImageProcessor:
     
 
     def _load_ckpt(self):
-        self.step = 0
+        self.step = 1
         self.start_epoch = 0 
         if os.path.exists(self.cfg.resume):
             resume_path = self.cfg.resume
@@ -157,25 +163,24 @@ class ImageProcessor:
 
 
     def _load_data(self):
-		train_dataset = LoadData(self.cfg.data_dir, test=False)
-		self.train_loader = DataLoader(
-										dataset = train_dataset, 
-										batch_size=self.cfg.batch_size, 
-										shuffle=True, 
-										num_workers=self.cfg.num_workers,
-		                          		pin_memory=True, 
-		                          		drop_last=True
-		                          		)
-
-		valid_dataset = LoadData(self.cfg.data_dir, test=True)
-		self.valid_loader = DataLoader(
-										dataset = valid_dataset, 
-										batch_size=self.cfg.batch_size, 
-										shuffle=True, 
-										num_workers=self.cfg.num_workers,
-		                          		pin_memory=True, 
-		                          		drop_last=True
-		                          		)
+        train_dataset = LoadData(self.cfg.data_dir, test=False)
+        self.train_loader = DataLoader(
+                                        dataset = train_dataset, 
+                                        batch_size=self.cfg.batch_size, 
+                                        shuffle=True, 
+                                        num_workers=self.cfg.num_workers,
+                                        pin_memory=True, 
+                                        drop_last=True
+                                        )
+        valid_dataset = LoadData(self.cfg.data_dir, test=True)
+        self.valid_loader = DataLoader(
+                                        dataset = valid_dataset, 
+                                        batch_size=self.cfg.batch_size, 
+                                        shuffle=True, 
+                                        num_workers=self.cfg.num_workers,
+                                        pin_memory=True, 
+                                        drop_last=True
+                                        )
 
 
     def _make_dir(self):
@@ -191,8 +196,6 @@ class ImageProcessor:
             print("[*] Logs Directory created!")
         else:
             print("[*] Logs Directory already exist!")
-
-        self.submission_file = os.path.join(os.getcwd(), self.cfg.submission_file)
 
 
 @hydra.main(config_path="./default.yaml")
