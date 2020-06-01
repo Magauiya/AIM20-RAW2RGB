@@ -10,12 +10,10 @@ import numpy as np
 # PyTorch
 import torch
 import torch.nn as nn
-import tqdm
 from skimage.metrics import peak_signal_noise_ratio as PSNR
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from tqdm import tqdm
 
 # my files
 import loss
@@ -55,14 +53,14 @@ class ImageProcessor:
         self.evaluate(tb_iter - 1, self.start_epoch)
 
         # Resume training from stopped epoch
-        for epoch in tqdm(range(self.start_epoch, self.cfg.num_epochs)):
+        for epoch in range(self.start_epoch, self.cfg.num_epochs):
             print('Epoch {}/{}'.format(epoch, self.cfg.num_epochs - 1))
             print('-' * 10)
 
             self.model.train()
 
             step_loss = 0
-            for idx, (noisy, clean) in tqdm(enumerate(self.train_loader, start=1)):
+            for idx, (noisy, clean) in enumerate(self.train_loader, start=1):
                 noisy = noisy.to(self.device, dtype=torch.float)
                 clean = clean.to(self.device, dtype=torch.float)
                 self.optimizer.zero_grad()
@@ -176,7 +174,7 @@ class ImageProcessor:
             pin_memory=True,
             drop_last=True
         )
-        
+
         print(f"Trainset:    {self.cfg.batch_size} x {len(self.train_loader)}")
         print(f"Validset:    {self.cfg.batch_size} x {len(self.valid_loader)}")
 
