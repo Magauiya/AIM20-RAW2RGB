@@ -176,6 +176,9 @@ class ImageProcessor:
             pin_memory=True,
             drop_last=True
         )
+        
+        print(f"Trainset:    {self.cfg.batch_size} x {len(self.train_loader)}")
+        print(f"Validset:    {self.cfg.batch_size} x {len(self.valid_loader)}")
 
     def _make_dir(self):
         # Output path: ckpts, imgs, etc.
