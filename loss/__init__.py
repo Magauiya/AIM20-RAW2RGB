@@ -19,7 +19,7 @@ not implemented:
 class Loss(nn.modules.loss._Loss):
     def __init__(self, args, device):
         super(Loss, self).__init__()
-        print('Preparing loss function:')
+        print('[*] Loss function:')
 
         self.loss = []
         self.loss_module = nn.ModuleList()

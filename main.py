@@ -27,8 +27,8 @@ class ImageProcessor:
     def __init__(self, cfg):
         self.cfg = cfg
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"Device: {self.device}")
-        print(f"Path: {self.cfg.data_dir}")
+        print(f"[*] Device: {self.device}")
+        print(f"[*] Path: {self.cfg.data_dir}")
 
     def build(self):
         self.criterion = loss.Loss(self.cfg, self.device)
@@ -37,7 +37,7 @@ class ImageProcessor:
         if model_name not in dir(model):
             model_name = "UNET"
 
-        print(f"Model choice: {self.cfg.model_name}")
+        print(f"[*] Model: {self.cfg.model_name}")
         self.model = getattr(model, model_name)(cfg=self.cfg).to(self.device)
 
         self.model = nn.DataParallel(self.model)
@@ -86,7 +86,7 @@ class ImageProcessor:
         self.model.eval()
         running_loss = 0
         running_psnr = 0
-
+        img_counter = 0
         with torch.no_grad():
             for noisy, clean in self.valid_loader:
                 noisy = noisy.to(self.device, dtype=torch.float)
@@ -99,11 +99,12 @@ class ImageProcessor:
                 output = np.clip(output.cpu().detach().numpy(), 0., 1.)
 
                 # ------------ PSNR ------------
-                for m in range(self.cfg.batch_size):
+                for m in range(np.shape(clean)[0]):
                     running_psnr += PSNR(clean[m], output[m])
+                    img_counter += 1
 
             epoch_loss = running_loss / len(self.valid_loader)
-            epoch_psnr = running_psnr / len(self.valid_loader)
+            epoch_psnr = running_psnr / img_counter
 
             print(f'Val Loss: {epoch_loss:.3}, PSNR:{epoch_psnr:.3}')
 
