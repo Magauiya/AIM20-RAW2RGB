@@ -25,7 +25,9 @@ from dataloader import LoadData
 
 class ImageProcessor:
     def __init__(self, cfg):
-        self.cfg = cfg
+        self.cfg = cfg.parameters
+        self.steplr = cfg.steplr
+        self.plateau = cfg.plateau
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Device: {self.device}")
         print(f"Path: {self.cfg.data_dir}")
@@ -42,7 +44,10 @@ class ImageProcessor:
 
         self.model = nn.DataParallel(self.model)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr_init)
-        self.lr_sch = lr_scheduler.StepLR(self.optimizer, step_size=self.cfg.lr_step, gamma=self.cfg.lr_gamma)
+        if self.cfg.scheduler == "step":
+            self.lr_sch = lr_scheduler.StepLR(self.optimizer, **self.steplr)
+        else:
+            self.lr_sch = lr_scheduler.ReduceLROnPlateau(self.optimizer, **self.plateau)
 
         self._make_dir()
         self._load_ckpt()
@@ -202,7 +207,7 @@ def main(cfg):
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
 
-    app = ImageProcessor(cfg.parameters)
+    app = ImageProcessor(cfg)
     app.build()
     if not cfg.parameters.inference:
         app.train()
