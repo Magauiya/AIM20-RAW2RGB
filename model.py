@@ -1,81 +1,183 @@
-from utils import *
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torchvision import transforms
+from torchvision import utils as vutils
 
-class UNET(nn.Module):
+import utils
+
+# Inspired by CycleISP and PaNet
+class PDANet(nn.Module):
     def __init__(self, cfg):
-        super(UNET, self).__init__()
-        self.upscale = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        self.inc = DoubleConv(cfg.in_channel, 64)
-        self.down1 = Down(64, 128)
-        self.down2 = Down(128, 256)
-        self.down3 = Down(256, 512)
-        self.down4 = Down(512, 512)
-        self.up1 = Up(1024, 256)
-        self.up2 = Up(512, 128)
-        self.up3 = Up(256, 64)
-        self.up4 = Up(128, 64)
-        self.outc = OutConv(64, cfg.out_channel)
+        super(PDANet, self).__init__()
+        self.kernel_size = 3
+        self.features = 64
+        self.in_channel = cfg.in_channel
+        self.out_channel = cfg.out_channel
+
+        m_head = [
+                    utils.default_conv(self.in_channel, self.features, self.kernel_size),
+                    nn.PReLU(),
+                    utils.default_conv(self.features, self.features, self.kernel_size)
+                 ]
+
+        m_tail = [
+                    utils.Upsampler(utils.default_conv, 2, self.in_feat, act=False),
+                    utils.default_conv(self.in_feat, self.out_channel, kernel_size=1)
+                 ]
+
+
+        self.head = nn.Sequential(*m_head)
+        self.tail = nn.Sequential(*m_tail)
 
     def forward(self, x):
-        x = self.upscale(x)
-        x1 = self.inc(x)
-        x2 = self.down1(x1)
-        x3 = self.down2(x2)
-        x4 = self.down3(x3)
-        x5 = self.down4(x4)
-        out = self.up1(x5, x4)
-        out = self.up2(out, x3)
-        out = self.up3(out, x2)
-        out = self.up4(out, x1)
-        out = self.outc(out)
+        out = self.head(x)
 
+        out = self.tail(x)
         return out
 
 
-'''
-Raw2Rgb from CycleISP
-source: https://github.com/swz30/CycleISP/blob/master/networks/cycleisp.py
-'''
+class PyramidAttention(nn.Module):
+    def __init__(self, level=4, res_scale=1, channel=64, reduction=2, ksize=3, stride=1, softmax_scale=10, average=True, conv=utils.default_conv):
+        super(PyramidAttention, self).__init__()
+        self.ksize = ksize
+        self.stride = stride
+        self.res_scale = res_scale
+        self.softmax_scale = softmax_scale
+        self.scale = [1-i/10 for i in range(level)]
+        self.average = average
+        escape_NaN = torch.FloatTensor([1e-4])
+        self.register_buffer('escape_NaN', escape_NaN)
+        self.conv_match_L_base = utils.BasicBlock(conv,channel,channel//reduction, 1, bn=False, act=nn.PReLU())
+        self.conv_match = utils.BasicBlock(conv,channel, channel//reduction, 1, bn=False, act=nn.PReLU())
+        self.conv_assembly = utils.BasicBlock(conv,channel, channel,1,bn=False, act=nn.PReLU())
 
+    def forward(self, input):
+        res = input
+        #theta
+        match_base = self.conv_match_L_base(input)
+        shape_base = list(res.size())
+        input_groups = torch.split(match_base,1,dim=0)
+        # patch size for matching 
+        kernel = self.ksize
+        # raw_w is for reconstruction
+        raw_w = []
+        # w is for matching
+        w = []
+        #build feature pyramid
+        for i in range(len(self.scale)):    
+            ref = input
+            if self.scale[i]!=1:
+                ref  = F.interpolate(input, scale_factor=self.scale[i], mode='bilinear')
+            #feature transformation function f
+            base = self.conv_assembly(ref)
+            shape_input = base.shape
+            #sampling
+            raw_w_i = utils.extract_image_patches(base, ksizes=[kernel, kernel],
+                                      strides=[self.stride,self.stride],
+                                      rates=[1, 1],
+                                      padding='same') # [N, C*k*k, L]
+            raw_w_i = raw_w_i.view(shape_input[0], shape_input[1], kernel, kernel, -1)
+            raw_w_i = raw_w_i.permute(0, 4, 1, 2, 3)    # raw_shape: [N, L, C, k, k]
+            raw_w_i_groups = torch.split(raw_w_i, 1, dim=0)
+            raw_w.append(raw_w_i_groups)
 
-class RRGNet(nn.Module):
-    def __init__(self, cfg):
-        super(RRGNet, self).__init__()
+            #feature transformation function g
+            ref_i = self.conv_match(ref)
+            shape_ref = ref_i.shape
+            #sampling
+            w_i = utils.extract_image_patches(ref_i, ksizes=[self.ksize, self.ksize],
+                                  strides=[self.stride, self.stride],
+                                  rates=[1, 1],
+                                  padding='same')
+            w_i = w_i.view(shape_ref[0], shape_ref[1], self.ksize, self.ksize, -1)
+            w_i = w_i.permute(0, 4, 1, 2, 3)    # w shape: [N, L, C, k, k]
+            w_i_groups = torch.split(w_i, 1, dim=0)
+            w.append(w_i_groups)
 
-        self.num_rrg = 3
-        self.num_dab = 5
-        self.n_feats = 96
-        self.kernel_size = 3
-        reduction = 8
+        y = []
+        for idx, xi in enumerate(input_groups):
+            #group in a filter
+            wi = torch.cat([w[i][idx][0] for i in range(len(self.scale))],dim=0)  # [L, C, k, k]
+            #normalize
+            max_wi = torch.max(torch.sqrt(utils.reduce_sum(torch.pow(wi, 2),
+                                                     axis=[1, 2, 3],
+                                                     keepdim=True)),
+                               self.escape_NaN)
+            wi_normed = wi/ max_wi
+            #matching
+            xi = utils.same_padding(xi, [self.ksize, self.ksize], [1, 1], [1, 1])  # xi: 1*c*H*W
+            yi = F.conv2d(xi, wi_normed, stride=1)   # [1, L, H, W] L = shape_ref[2]*shape_ref[3]
+            yi = yi.view(1,wi.shape[0], shape_base[2], shape_base[3])  # (B=1, C=32*32, H=32, W=32)
+            # softmax matching score
+            yi = F.softmax(yi*self.softmax_scale, dim=1)
+            
+            if self.average == False:
+                yi = (yi == yi.max(dim=1,keepdim=True)[0]).float()
+            
+            # deconv for patch pasting
+            raw_wi = torch.cat([raw_w[i][idx][0] for i in range(len(self.scale))],dim=0)
+            yi = F.conv_transpose2d(yi, raw_wi, stride=self.stride,padding=1)/4.
+            y.append(yi)
+      
+        y = torch.cat(y, dim=0)+res*self.res_scale  # back to the mini-batch
+        return 
 
-        activation = nn.PReLU(self.n_feats)
+class DAU(nn.Module):
+    def __init__(self, n_feat, reduction=8, bias=False):
+        super(DAU, self).__init__()
+        out_feat = n_feat // reduction
+        self.head = nn.Sequential(
+                nn.Conv2d(n_feat, n_feat, 3, 1, 1, bias=bias),
+                nn.PReLU(),
+                nn.Conv2d(n_feat, n_feat, 3, 1, 1, bias=bias)
+        )
 
-        modules_head = [conv(cfg.in_channel, self.n_feats, kernel_size=self.kernel_size, stride=1)]
+        self.spatial = nn.Sequential(
+            nn.Conv2d(2, 1, 1, 1, 0, bias=bias),
+            nn.Sigmoid()
+        )
 
-        modules_body = [
-            RRG(
-                conv, self.n_feats, self.kernel_size, reduction, act=activation, num_dab=self.num_dab) \
-            for _ in range(self.num_rrg)]
+        self.channel = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(n_feat, out_feat, 1, 1, 0, bias=bias),
+            nn.PReLU(),
+            nn.Conv2d(out_feat, n_feat, 1, 1, 0, bias=bias),
+            nn.Sigmoid()
+        )
 
-        modules_body.append(conv(self.n_feats, self.n_feats, self.kernel_size))
-        modules_body.append(activation)
-
-        modules_tail = [conv(self.n_feats, self.n_feats, self.kernel_size), activation]
-        modules_tail_rgb = [conv(self.n_feats, cfg.out_channel * 4, kernel_size=1)]  # , nn.Sigmoid()]
-
-        self.head = nn.Sequential(*modules_head)
-        self.body = nn.Sequential(*modules_body)
-        self.tail = nn.Sequential(*modules_tail)
-        self.tail_rgb = nn.Sequential(*modules_tail_rgb)
-
-        conv1x1 = [conv(self.n_feats * 2, self.n_feats, kernel_size=1)]
-        self.conv1x1 = nn.Sequential(*conv1x1)
+        self.tale = nn.Conv2d(2*n_feat, n_feat, 3, 1, 1, bias=bias)
 
     def forward(self, x):
-        x = self.head(x)
-        for i in range(len(self.body)):
-            x = self.body[i](x)
-        x = self.tail(x)
-        x = self.tail_rgb(x)
-        x = nn.functional.pixel_shuffle(x, 2)
-        return x
+        feat = self.head(x)
+
+        # Channel Attention
+        ch_at = torch.mul(self.channel(feat), feat)
+
+        # Spatial Attention
+        gmp, _ = torch.max(feat, dim=1, keepdim=True)  # max pool over channels
+        gap = torch.mean(feat, dim=1, keepdim=True) # average pool over channels
+
+        sp_map = self.spatial(torch.cat([gap, gmp], axis=1))
+        sp_at = torch.mul(sp_map, feat)
+
+        out = torch.cat([ch_at, sp_at], axis=1)
+        out = self.tale(out)
+
+        return ou
+
+class RPAB(nn.Module):
+    def __init__(self, features):
+        super(RPAB, self).__init__()
+
+        m_body = [
+                    utils.ResBlock(utils.default_conv, features, 3),
+                    PyramidAttention(),
+                    utils.ResBlock(utils.default_conv, features, 3)
+                    ]
+        
+        self.body = nn.Sequential(*m_body)
+
+    def forward(self, x):
+        return self.body(x)

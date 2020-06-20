@@ -1,206 +1,155 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+def normalize(x):
+    return x.mul_(2).add_(-1)
 
-## For UNet
-
-class DoubleConv(nn.Module):
-    """(convolution => [BN] => ReLU) * 2"""
-
-    def __init__(self, in_channels, out_channels, mid_channels=None):
-        super().__init__()
-        if not mid_channels:
-            mid_channels = out_channels
-        self.double_conv = nn.Sequential(
-            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(mid_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
-        )
-
-    def forward(self, x):
-        return self.double_conv(x)
-
-
-class Down(nn.Module):
-    """Downscaling with maxpool then double conv"""
-
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.maxpool_conv = nn.Sequential(
-            nn.MaxPool2d(2),
-            DoubleConv(in_channels, out_channels)
-        )
-
-    def forward(self, x):
-        return self.maxpool_conv(x)
+def same_padding(images, ksizes, strides, rates):
+    assert len(images.size()) == 4
+    batch_size, channel, rows, cols = images.size()
+    out_rows = (rows + strides[0] - 1) // strides[0]
+    out_cols = (cols + strides[1] - 1) // strides[1]
+    effective_k_row = (ksizes[0] - 1) * rates[0] + 1
+    effective_k_col = (ksizes[1] - 1) * rates[1] + 1
+    padding_rows = max(0, (out_rows-1)*strides[0]+effective_k_row-rows)
+    padding_cols = max(0, (out_cols-1)*strides[1]+effective_k_col-cols)
+    # Pad the input
+    padding_top = int(padding_rows / 2.)
+    padding_left = int(padding_cols / 2.)
+    padding_bottom = padding_rows - padding_top
+    padding_right = padding_cols - padding_left
+    paddings = (padding_left, padding_right, padding_top, padding_bottom)
+    images = torch.nn.ZeroPad2d(paddings)(images)
+    return images
 
 
-class Up(nn.Module):
-    """Upscaling then double conv"""
+def extract_image_patches(images, ksizes, strides, rates, padding='same'):
+    """
+    Extract patches from images and put them in the C output dimension.
+    :param padding:
+    :param images: [batch, channels, in_rows, in_cols]. A 4-D Tensor with shape
+    :param ksizes: [ksize_rows, ksize_cols]. The size of the sliding window for
+     each dimension of images
+    :param strides: [stride_rows, stride_cols]
+    :param rates: [dilation_rows, dilation_cols]
+    :return: A Tensor
+    """
+    assert len(images.size()) == 4
+    assert padding in ['same', 'valid']
+    batch_size, channel, height, width = images.size()
+    
+    if padding == 'same':
+        images = same_padding(images, ksizes, strides, rates)
+    elif padding == 'valid':
+        pass
+    else:
+        raise NotImplementedError('Unsupported padding type: {}.\
+                Only "same" or "valid" are supported.'.format(padding))
 
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        self.conv = DoubleConv(in_channels, out_channels, in_channels // 2)
-
-    def forward(self, x1, x2):
-        x1 = self.up(x1)
-        # input is CHW
-        diffY = x2.size()[2] - x1.size()[2]
-        diffX = x2.size()[3] - x1.size()[3]
-
-        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
-                        diffY // 2, diffY - diffY // 2])
-        x = torch.cat([x2, x1], dim=1)
-        return self.conv(x)
-
-
-class OutConv(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(OutConv, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
-
-    def forward(self, x):
-        return self.conv(x)
-
-
-class DCR_block(nn.Module):
-    def __init__(self, channel_in):
-        super(DCR_block, self).__init__()
-
-        self.conv_1 = nn.Conv2d(in_channels=channel_in, out_channels=int(channel_in / 2.), kernel_size=3, stride=1,
-                                padding=1)
-        self.relu1 = nn.PReLU()
-        self.conv_2 = nn.Conv2d(in_channels=int(channel_in * 3 / 2.), out_channels=int(channel_in / 2.), kernel_size=3,
-                                stride=1, padding=1)
-        self.relu2 = nn.PReLU()
-        self.conv_3 = nn.Conv2d(in_channels=channel_in * 2, out_channels=channel_in, kernel_size=3, stride=1, padding=1)
-        self.relu3 = nn.PReLU()
-
-    def forward(self, x):
-        residual = x
-
-        out = self.relu1(self.conv_1(x))
-        conc = torch.cat([x, out], 1)
-        out = self.relu2(self.conv_2(conc))
-        conc = torch.cat([conc, out], 1)
-        out = self.relu3(self.conv_3(conc))
-        out = torch.add(out, residual)
-        return out
+    unfold = torch.nn.Unfold(kernel_size=ksizes,
+                             dilation=rates,
+                             padding=0,
+                             stride=strides)
+    patches = unfold(images)
+    return patches  # [N, C*k*k, L], L is the total number of such blocks
 
 
-''' For Raw2Rgb '''
+def reduce_mean(x, axis=None, keepdim=False):
+    if not axis:
+        axis = range(len(x.shape))
+    for i in sorted(axis, reverse=True):
+        x = torch.mean(x, dim=i, keepdim=keepdim)
+    return x
 
 
-def conv(in_channels, out_channels, kernel_size, bias=True, padding=1, stride=1):
+def reduce_std(x, axis=None, keepdim=False):
+    if not axis:
+        axis = range(len(x.shape))
+    for i in sorted(axis, reverse=True):
+        x = torch.std(x, dim=i, keepdim=keepdim)
+    return x
+
+
+def reduce_sum(x, axis=None, keepdim=False):
+    if not axis:
+        axis = range(len(x.shape))
+    for i in sorted(axis, reverse=True):
+        x = torch.sum(x, dim=i, keepdim=keepdim)
+    return x
+
+
+def default_conv(in_channels, out_channels, kernel_size,stride=1, bias=True):
     return nn.Conv2d(
         in_channels, out_channels, kernel_size,
-        padding=(kernel_size // 2), bias=bias, stride=stride)
+        padding=(kernel_size//2),stride=stride, bias=bias)
 
 
-## Channel Attention (CA) Layer
-class CALayer(nn.Module):
-    def __init__(self, channel, reduction=16):
-        super(CALayer, self).__init__()
-        # global average pooling: feature --> point
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        # feature channel downscale and upscale --> channel weight
-        self.conv_du = nn.Sequential(
-            nn.Conv2d(channel, channel // reduction, 1, padding=0, bias=True),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(channel // reduction, channel, 1, padding=0, bias=True),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        y = self.avg_pool(x)
-        y = self.conv_du(y)
-        return x * y
-
-
-class BasicConv(nn.Module):
-    def __init__(self, in_planes, out_planes, kernel_size, stride=1, padding=0, dilation=1, groups=1, relu=True,
-                 bn=False, bias=False):
-        super(BasicConv, self).__init__()
-        self.out_channels = out_planes
-        self.conv = nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=padding,
-                              dilation=dilation, groups=groups, bias=bias)
-        self.bn = nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True) if bn else None
-        self.relu = nn.ReLU() if relu else None
-
-    def forward(self, x):
-        x = self.conv(x)
-        if self.bn is not None:
-            x = self.bn(x)
-        if self.relu is not None:
-            x = self.relu(x)
-        return x
-
-
-class ChannelPool(nn.Module):
-    def forward(self, x):
-        return torch.cat((torch.max(x, 1)[0].unsqueeze(1), torch.mean(x, 1).unsqueeze(1)), dim=1)
-
-
-class spatial_attn_layer(nn.Module):
-    def __init__(self, kernel_size=3):
-        super(spatial_attn_layer, self).__init__()
-        self.compress = ChannelPool()
-        self.spatial = BasicConv(2, 1, kernel_size, stride=1, padding=(kernel_size - 1) // 2, relu=False)
-
-    def forward(self, x):
-        # import pdb;pdb.set_trace()
-        x_compress = self.compress(x)
-        x_out = self.spatial(x_compress)
-        scale = torch.sigmoid(x_out)  # broadcasting
-        return x * scale
-
-
-## Recursive Residual Group (RRG)
-class RRG(nn.Module):
-    def __init__(self, conv, n_feat, kernel_size, reduction, act, num_dab):
-        super(RRG, self).__init__()
-        modules_body = []
-        modules_body = [
-            DAB(
-                conv, n_feat, kernel_size, reduction, bias=True, bn=False, act=act) \
-            for _ in range(num_dab)]
-        modules_body.append(conv(n_feat, n_feat, kernel_size))
-        self.body = nn.Sequential(*modules_body)
-
-    def forward(self, x):
-        res = self.body(x)
-        res += x
-        return res
-
-
-## Dual Attention Block (DAB)
-class DAB(nn.Module):
+class BasicBlock(nn.Sequential):
     def __init__(
-            self, conv, n_feat, kernel_size, reduction,
-            bias=True, bn=False, act=nn.ReLU(True)):
+        self, conv, in_channels, out_channels, kernel_size, stride=1, bias=True,
+        bn=False, act=nn.PReLU()):
 
-        super(DAB, self).__init__()
-        modules_body = []
+        m = [conv(in_channels, out_channels, kernel_size, bias=bias)]
+        if bn:
+            m.append(nn.BatchNorm2d(out_channels))
+        if act is not None:
+            m.append(act)
+
+        super(BasicBlock, self).__init__(*m)
+
+
+class ResBlock(nn.Module):
+    def __init__(
+        self, conv, n_feats, kernel_size,
+        bias=True, bn=False, act=nn.PReLU(), res_scale=1):
+
+        super(ResBlock, self).__init__()
+        m = []
         for i in range(2):
-            modules_body.append(conv(n_feat, n_feat, kernel_size, bias=bias))
-            if bn: modules_body.append(nn.BatchNorm2d(n_feat))
-            if i == 0: modules_body.append(act)
+            m.append(conv(n_feats, n_feats, kernel_size, bias=bias))
+            if bn:
+                m.append(nn.BatchNorm2d(n_feats))
+            if i == 0:
+                m.append(act)
 
-        self.SA = spatial_attn_layer()  ## Spatial Attention
-        self.CA = CALayer(n_feat, reduction)  ## Channel Attention
-        self.body = nn.Sequential(*modules_body)
-        self.conv1x1 = nn.Conv2d(n_feat * 2, n_feat, kernel_size=1)
+        self.body = nn.Sequential(*m)
+        self.res_scale = res_scale
 
     def forward(self, x):
-        res = self.body(x)
-        sa_branch = self.SA(res)
-        ca_branch = self.CA(res)
-        res = torch.cat([sa_branch, ca_branch], dim=1)
-        res = self.conv1x1(res)
+        res = self.body(x).mul(self.res_scale)
         res += x
+
         return res
+
+
+class Upsampler(nn.Sequential):
+    def __init__(self, conv, scale, n_feats, bn=False, act=False, bias=True):
+
+        m = []
+        if (scale & (scale - 1)) == 0:    # Is scale = 2^n?
+            for _ in range(int(math.log(scale, 2))):
+                m.append(conv(n_feats, 4 * n_feats, 3, bias))
+                m.append(nn.PixelShuffle(2))
+                if bn:
+                    m.append(nn.BatchNorm2d(n_feats))
+                if act == 'relu':
+                    m.append(nn.ReLU(True))
+                elif act == 'prelu':
+                    m.append(nn.PReLU(n_feats))
+
+        elif scale == 3:
+            m.append(conv(n_feats, 9 * n_feats, 3, bias))
+            m.append(nn.PixelShuffle(3))
+            if bn:
+                m.append(nn.BatchNorm2d(n_feats))
+            if act == 'relu':
+                m.append(nn.ReLU(True))
+            elif act == 'prelu':
+                m.append(nn.PReLU(n_feats))
+        else:
+            raise NotImplementedError
+
+        super(Upsampler, self).__init__(*m)
