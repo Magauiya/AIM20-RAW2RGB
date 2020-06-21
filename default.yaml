@@ -11,7 +11,7 @@ parameters:
   model_name: "PDANet"
   img_size: 512
   num_epochs: 100
-  batch_size: 64
+  batch_size: 32
   num_workers: 12
   lr_init: 1.e-4
   lr_step: 25
@@ -23,6 +23,7 @@ parameters:
   optim_reset: False
   in_channel: 4
   out_channel: 3
+  scheduler: "plateau"
 
 steplr:
   step_size: 70

@@ -89,7 +89,7 @@ def default_conv(in_channels, out_channels, kernel_size,stride=1, bias=True):
 
 class BasicBlock(nn.Sequential):
     def __init__(
-        self, conv, in_channels, out_channels, kernel_size, stride=1, bias=True,
+        self, conv, in_channels, out_channels, kernel_size=3, stride=1, bias=True,
         bn=False, act=nn.PReLU()):
 
         m = [conv(in_channels, out_channels, kernel_size, bias=bias)]

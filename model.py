@@ -23,19 +23,74 @@ class PDANet(nn.Module):
                  ]
 
         m_tail = [
-                    utils.Upsampler(utils.default_conv, 2, self.in_feat, act=False),
-                    utils.default_conv(self.in_feat, self.out_channel, kernel_size=1)
+                    utils.Upsampler(utils.default_conv, 2, self.in_channel, act=False),
+                    utils.default_conv(self.in_channel, self.out_channel, kernel_size=1)
                  ]
-
 
         self.head = nn.Sequential(*m_head)
         self.tail = nn.Sequential(*m_tail)
 
-    def forward(self, x):
-        out = self.head(x)
+        self.down1 = Down(64, 128, level=4)
+        self.down2 = Down(128, 256, level=3)
+        self.down3 = Down(256, 384, level=2)
+        self.up3 = Up(640, 256)
+        self.up2 = Up(384, 128)
+        self.up1 = Up(192, 64)
+        self.conv = utils.BasicBlock(utils.default_conv, 64, 4)
 
+
+    def forward(self, x):
+        x1 = self.head(x)
+
+        x2 = self.down1(x1)
+        x3 = self.down2(x2)
+        x4 = self.down3(x3)
+
+        out = self.up3(x4, x3)
+        out = self.up2(out, x2)
+        out = self.up1(out, x1)
+        out = self.conv(out) + x # skip connection 
         out = self.tail(x)
         return out
+
+
+class Down(nn.Module):
+    """Downscaling with maxpool then RPAB"""
+
+    def __init__(self, in_channels, out_channels, level):
+        super().__init__()
+        self.maxpool_conv = nn.Sequential(
+            nn.MaxPool2d(2),
+            utils.BasicBlock(utils.default_conv, in_channels, out_channels),
+            RPAB(out_channels, level)
+        )
+
+    def forward(self, x):
+        return self.maxpool_conv(x)
+
+
+class Up(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+
+        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.attention = nn.Sequential(
+            utils.BasicBlock(utils.default_conv, in_channels, out_channels),
+            DAU(out_channels)
+        )
+
+
+    def forward(self, x1, x2):
+        x1 = self.up(x1)
+        # input is CHW
+        diffY = x2.size()[2] - x1.size()[2]
+        diffX = x2.size()[3] - x1.size()[3]
+
+        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
+                        diffY // 2, diffY - diffY // 2])
+
+        x = torch.cat([x2, x1], dim=1)
+        return self.attention(x)
 
 
 class PyramidAttention(nn.Module):
@@ -122,7 +177,8 @@ class PyramidAttention(nn.Module):
             y.append(yi)
       
         y = torch.cat(y, dim=0)+res*self.res_scale  # back to the mini-batch
-        return 
+        return y
+
 
 class DAU(nn.Module):
     def __init__(self, n_feat, reduction=8, bias=False):
@@ -165,19 +221,22 @@ class DAU(nn.Module):
         out = torch.cat([ch_at, sp_at], axis=1)
         out = self.tale(out)
 
-        return ou
+        return out
+
 
 class RPAB(nn.Module):
-    def __init__(self, features):
-        super(RPAB, self).__init__()
+	def __init__(self, features, level):
+		super(RPAB, self).__init__()
 
-        m_body = [
-                    utils.ResBlock(utils.default_conv, features, 3),
-                    PyramidAttention(),
-                    utils.ResBlock(utils.default_conv, features, 3)
-                    ]
-        
-        self.body = nn.Sequential(*m_body)
+		m_body = [
+				utils.ResBlock(utils.default_conv, features, 3),
+				PyramidAttention(level=level, channel=features),
+				utils.ResBlock(utils.default_conv, features, 3)
+				]
 
-    def forward(self, x):
-        return self.body(x)
+		self.body = nn.Sequential(*m_body)
+
+	def forward(self, x):
+		out = self.body(x)
+		return out
+

@@ -10,13 +10,11 @@ import numpy as np
 # PyTorch
 import torch
 import torch.nn as nn
-import tqdm
 from skimage.metrics import peak_signal_noise_ratio as PSNR
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from tqdm import tqdm
-
+from torchvision.utils import save_image, make_grid
 # my files
 import loss
 import model
@@ -37,7 +35,7 @@ class ImageProcessor:
         model_name = self.cfg.model_name
 
         if model_name not in dir(model):
-            model_name = "UNET"
+            model_name = "PDANet"
 
         print(f"Model choice: {self.cfg.model_name}")
         self.model = getattr(model, model_name)(cfg=self.cfg).to(self.device)
@@ -60,14 +58,14 @@ class ImageProcessor:
         self.evaluate(tb_iter - 1, self.start_epoch)
 
         # Resume training from stopped epoch
-        for epoch in tqdm(range(self.start_epoch, self.cfg.num_epochs)):
+        for epoch in range(self.start_epoch, self.cfg.num_epochs):
             print('Epoch {}/{}'.format(epoch, self.cfg.num_epochs - 1))
             print('-' * 10)
 
             self.model.train()
 
             step_loss = 0
-            for idx, (noisy, clean) in tqdm(enumerate(self.train_loader, start=1)):
+            for idx, (noisy, clean) in enumerate(self.train_loader, start=1):
                 noisy = noisy.to(self.device, dtype=torch.float)
                 clean = clean.to(self.device, dtype=torch.float)
                 self.optimizer.zero_grad()
@@ -80,7 +78,7 @@ class ImageProcessor:
                 if idx % self.cfg.verbose_step == 0:
                     self.evaluate(tb_iter, epoch)
                     self.writer.add_scalar("Train/Loss", step_loss / self.cfg.verbose_step, tb_iter)
-                    self.writer.add_scalar("Train/LR", self.lr_sch.get_lr()[0], tb_iter)
+                    self.writer.add_scalar("Train/LR", self.optimizer.param_groups[0]['lr'], tb_iter)
                     print(f'[{tb_iter:3}/{epoch:3}/{idx:4}] Train loss: {loss:.5e}')
 
                     tb_iter += 1
@@ -93,10 +91,15 @@ class ImageProcessor:
         running_psnr = 0
 
         with torch.no_grad():
-            for noisy, clean in self.valid_loader:
+            for idx, (noisy, clean) in enumerate(self.valid_loader):
                 noisy = noisy.to(self.device, dtype=torch.float)
                 clean = clean.to(self.device, dtype=torch.float)
                 output = self.model(noisy)
+
+                if idx == 1:
+                    save_image(output, 'step_%d_output.png'%step, nrow=4)
+                    save_image(clean, 'step_%d_clean.png'%step, nrow=4)
+                
                 loss = self.criterion(output, clean)
                 running_loss += loss.item()
 
@@ -107,8 +110,8 @@ class ImageProcessor:
                 for m in range(self.cfg.batch_size):
                     running_psnr += PSNR(clean[m], output[m])
 
-            epoch_loss = running_loss / len(self.valid_loader)
-            epoch_psnr = running_psnr / len(self.valid_loader)
+            epoch_loss = running_loss / (len(self.valid_loader)*self.cfg.batch_size)
+            epoch_psnr = running_psnr / (len(self.valid_loader)*self.cfg.batch_size)
 
             print(f'Val Loss: {epoch_loss:.3}, PSNR:{epoch_psnr:.3}')
 
