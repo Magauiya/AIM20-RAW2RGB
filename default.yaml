@@ -11,11 +11,11 @@ parameters:
   model_name: "PDANet"
   img_size: 512
   num_epochs: 100
-  batch_size: 32
+  batch_size: 8
   num_workers: 12
-  lr_init: 1.e-4
+  lr_init: 1.e-3
   lr_step: 25
-  lr_gamma: 0.7
+  lr_gamma: 0.5
   random_seed: 42
   verbose_step: 1000
   requires_grad: True

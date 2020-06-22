@@ -240,3 +240,46 @@ class RPAB(nn.Module):
 		out = self.body(x)
 		return out
 
+
+class PANET(nn.Module):
+    def __init__(self, cfg, conv=utils.default_conv):
+        super(PANET, self).__init__()
+
+        n_resblocks = 80
+        n_feats = 64
+        kernel_size = 3 
+        scale = 2
+
+        msa = PyramidAttention(level=5)
+        # define head module
+        m_head = [conv(4, n_feats, kernel_size)]
+
+        # define body module
+        m_body = [
+            utils.ResBlock(
+                conv, n_feats, kernel_size, nn.PReLU()) for _ in range(n_resblocks//2)
+        ]
+        m_body.append(msa)
+        for i in range(n_resblocks//2):
+            m_body.append(utils.ResBlock(conv,n_feats,kernel_size,nn.PReLU()))
+      
+        m_body.append(conv(n_feats, n_feats, kernel_size))
+
+        # define tail module
+        m_tail = [
+            utils.Upsampler(conv, scale, n_feats, act=False),
+            conv(n_feats, 3, kernel_size)
+        ]
+
+        self.head = nn.Sequential(*m_head)
+        self.body = nn.Sequential(*m_body)
+        self.tail = nn.Sequential(*m_tail)
+
+    def forward(self, x):
+        #x = self.sub_mean(x)
+        x = self.head(x)
+        res = self.body(x)
+        res += x
+        x = self.tail(res)
+
+        return x

@@ -83,7 +83,6 @@ class ImageProcessor:
 
                     tb_iter += 1
                     step_loss = 0
-            self.lr_sch.step()
 
     def evaluate(self, step, epoch):
         self.model.eval()
@@ -120,6 +119,8 @@ class ImageProcessor:
 
             self.writer.add_scalar("Validation/Loss", epoch_loss, step)
             self.writer.add_scalar("Validation/PSNR", epoch_psnr, step)
+
+        self.lr_sch.step(metrics=epoch_loss)
         self.model.train()
 
     def test(self):
