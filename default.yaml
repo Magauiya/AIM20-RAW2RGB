@@ -9,9 +9,9 @@ parameters:
   logs_path: "log"
   loss: "1.0*L1"
   model_name: "PDANet"
-  img_size: 512
+  img_size: 448
   num_epochs: 100
-  batch_size: 8
+  batch_size: 64
   num_workers: 12
   lr_init: 1.e-3
   lr_step: 25

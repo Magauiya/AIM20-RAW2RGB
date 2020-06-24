@@ -13,8 +13,8 @@ class PDANet(nn.Module):
         super(PDANet, self).__init__()
         self.kernel_size = 3
         self.features = 64
-        self.in_channel = cfg.in_channel
-        self.out_channel = cfg.out_channel
+        self.in_channel = 4#cfg.in_channel
+        self.out_channel = 3#cfg.out_channel
 
         m_head = [
                     utils.default_conv(self.in_channel, self.features, self.kernel_size),
@@ -23,8 +23,8 @@ class PDANet(nn.Module):
                  ]
 
         m_tail = [
-                    utils.Upsampler(utils.default_conv, 2, self.in_channel, act=False),
-                    utils.default_conv(self.in_channel, self.out_channel, kernel_size=1)
+                    utils.Upsampler(utils.default_conv, 2, self.features, act=False),
+                    utils.default_conv(self.features, self.out_channel, kernel_size=1)
                  ]
 
         self.head = nn.Sequential(*m_head)
@@ -36,7 +36,6 @@ class PDANet(nn.Module):
         self.up3 = Up(640, 256)
         self.up2 = Up(384, 128)
         self.up1 = Up(192, 64)
-        self.conv = utils.BasicBlock(utils.default_conv, 64, 4)
 
 
     def forward(self, x):
@@ -48,9 +47,8 @@ class PDANet(nn.Module):
 
         out = self.up3(x4, x3)
         out = self.up2(out, x2)
-        out = self.up1(out, x1)
-        out = self.conv(out) + x # skip connection 
-        out = self.tail(x)
+        out = self.up1(out, x1) + x1 
+        out = self.tail(out)
         return out
 
 
@@ -225,20 +223,18 @@ class DAU(nn.Module):
 
 
 class RPAB(nn.Module):
-	def __init__(self, features, level):
-		super(RPAB, self).__init__()
-
-		m_body = [
-				utils.ResBlock(utils.default_conv, features, 3),
-				PyramidAttention(level=level, channel=features),
-				utils.ResBlock(utils.default_conv, features, 3)
-				]
-
-		self.body = nn.Sequential(*m_body)
-
-	def forward(self, x):
-		out = self.body(x)
-		return out
+    def __init__(self, features, level):
+        super(RPAB, self).__init__()
+        m_body = [
+            utils.ResBlock(utils.default_conv, features, 3),
+            PyramidAttention(level=level, channel=features),
+            utils.ResBlock(utils.default_conv, features, 3)
+        ]
+        self.body = nn.Sequential(*m_body)
+    
+    def forward(self, x):
+        out = self.body(x)
+        return out
 
 
 class PANET(nn.Module):
@@ -250,21 +246,30 @@ class PANET(nn.Module):
         kernel_size = 3 
         scale = 2
 
-        msa = PyramidAttention(level=5)
+        msa = nn.Sequential(
+            conv(n_feats, n_feats, 3, 2, 1),
+            PyramidAttention(level=4),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        )
+                                                             
         # define head module
         m_head = [conv(4, n_feats, kernel_size)]
 
         # define body module
+        
         m_body = [
             utils.ResBlock(
                 conv, n_feats, kernel_size, nn.PReLU()) for _ in range(n_resblocks//2)
         ]
+        
         m_body.append(msa)
+        
+        
         for i in range(n_resblocks//2):
             m_body.append(utils.ResBlock(conv,n_feats,kernel_size,nn.PReLU()))
-      
         m_body.append(conv(n_feats, n_feats, kernel_size))
-
+        
+        
         # define tail module
         m_tail = [
             utils.Upsampler(conv, scale, n_feats, act=False),
@@ -276,10 +281,8 @@ class PANET(nn.Module):
         self.tail = nn.Sequential(*m_tail)
 
     def forward(self, x):
-        #x = self.sub_mean(x)
-        x = self.head(x)
-        res = self.body(x)
-        res += x
-        x = self.tail(res)
-
-        return x
+        out = self.head(x)
+        res = self.body(out)
+        out = res + out
+        out = self.tail(out)
+        return out
