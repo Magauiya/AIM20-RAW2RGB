@@ -238,4 +238,284 @@ class RPAB(nn.Module):
         return out
 
 
+# MIRNet based model WIP
+class MIRNet(nn.Module):
+    def __init__(self, cfg):
+        super(MIRNet, self).__init__()
+
+        # Params
+        self.kernel_size = 3
+        self.features = 64
+        self.in_channel = cfg.in_channel
+        self.out_channel = cfg.out_channel
+
+        N_rrg = 3
+
+        # Shallow features
+        self.head = nn.Conv2d(self.in_channel, self.features, 3, 1, 1, bias=bias)
+        self.rrg = nn.ModuleList([RRG(args) for _ in range(N_rrg)])
+        self.tale = nn.Sequential(
+                nn.Conv2d(self.features, self.out_channel, 3, 1, 1, bias=bias),
+                nn.ReLU(),
+                nn.Conv2d(self.out_channel, self.out_channel, 1, 1, 0, bias=bias)
+                )
+
+    def forward(self, x):
+        out = self.head(x)
+        for i, group in enumerate(self.rrg):
+            out = group(out)
+
+        out = self.tale(out)
+        return out
+
+
+class MRB(nn.Module):
+    def __init__(self, n_feat=64, reduction=8, scale=2, type='antialias'):
+        super(MRB, self).__init__()
+
+        downX2 = n_feat*scale
+        downX4 = downX2*scale
+
+        # Pre DAU
+        self.top_dau_pre = DAU(n_feat, reduction)
+        self.mid_dau_pre = nn.Sequential(
+                                Downsample(scale, n_feat, type),
+                                DAU(downX2, reduction)
+                                )
+        self.btm_dau_pre = nn.Sequential(
+                                Downsample(scale, n_feat, type),
+                                Downsample(scale, downX2, type),
+                                DAU(downX4, reduction)
+                                )
+
+        # to the TOP
+        self.btm2top = nn.Sequential(
+                                Upsample(2, downX4),
+                                Upsample(2, downX2)
+                                )
+        self.mid2top = Upsample(2, downX2)
+
+        # to the MID
+        self.top2mid = Downsample(2, n_feat, type)
+        self.btm2mid = Upsample(2, downX4)
+
+        # to the BTM
+        self.top2btm = nn.Sequential(
+                                Downsample(2, n_feat, type),
+                                Downsample(2, downX2, type)
+                                )
+
+        self.mid2btm = Downsample(2, downX2, type)
+
+        # SKFF
+        self.top_skff = SKFF(n_feat)
+        self.mid_skff = SKFF(downX2)
+        self.btm_skff = SKFF(downX4)
+
+        # POST DAU
+        self.top_dau_pos = DAU(n_feat, reduction)
+        self.mid_dau_pos = nn.Sequential(
+                                DAU(downX2, reduction),
+                                Upsample(2, downX2)
+                                )
+        self.btm_dau_pos = nn.Sequential(
+                                DAU(downX4, reduction),
+                                Upsample(2, downX4),
+                                Upsample(2, downX2)
+                                )
+        # Tale
+        self.skff_last = SKFF(n_feat)
+        self.tale = nn.Conv2d(n_feat, n_feat, 3, 1, 1, bias=True)
+
+
+    def forward(self, x):
+        top = self.top_dau_pre(x)
+        mid = self.mid_dau_pre(x)
+        btm = self.btm_dau_pre(x)
+        #print("DAU pre: top {} mid {} btm {}".format(top.size(), mid.size(), btm.size()))
+
+        top_skff = self.top_skff(top, self.mid2top(mid), self.btm2top(btm))
+        mid_skff = self.mid_skff(mid, self.top2mid(top), self.btm2mid(btm))
+        btm_skff = self.btm_skff(btm, self.top2btm(top), self.mid2btm(mid))
+        #print("SKFF top_skff {} mid_skff {} btm_skff {}".format(top_skff.size(), mid_skff.size(), btm_skff.size()))
+
+        top = self.top_dau_pos(top_skff)
+        mid = self.mid_dau_pos(mid_skff)
+        btm = self.btm_dau_pos(btm_skff)
+        #print("DAU pos top {} mid {} btm {}".format(top.size(), mid.size(), btm.size()))
+
+        out = self.tale(self.skff_last(top, mid, btm)) + x # long skip
+        return out
+
+
+class RRG(nn.Module):
+    def __init__(self, args):
+        super(RRG, self).__init__()
+
+        n_feat = args.n_feat
+        reduction = args.reduction
+        type = args.downsample
+        scale = args.scale
+        N_mrb = args.n_resblocks
+        bias = args.bias
+
+        self.head = nn.Conv2d(n_feat, n_feat, 3, 1, 1, bias=bias)
+        self.mrb = nn.ModuleList(
+                    [MRB(n_feat, reduction, scale, type) for _ in range(N_mrb)]
+                    )
+        self.tale = nn.Conv2d(n_feat, n_feat, 3, 1, 1, bias=bias)
+
+    def forward(self, x):
+        out = self.head(x)
+        for i, block in enumerate(self.mrb):
+            out = block(out)
+
+        out = self.tale(out) + x
+        return out
+
+
+class SKFF(nn.Module):
+    def __init__(self, n_feat, reduction=8, bias=False):
+        super(SKFF, self).__init__()
+        out_feat = n_feat // reduction
+
+        self.gap = nn.Sequential(
+                nn.AdaptiveAvgPool2d(1),
+                nn.Conv2d(n_feat, out_feat, 1, 1, 0, bias=bias),
+                nn.PReLU()
+                )
+
+        self.conv_top = nn.Sequential(
+                            nn.Conv2d(out_feat, n_feat, 1, 1, 0, bias=bias),
+                            nn.Softmax(dim=1)
+                            )
+        self.conv_mid = nn.Sequential(
+                            nn.Conv2d(out_feat, n_feat, 1, 1, 0, bias=bias),
+                            nn.Softmax(dim=1)
+                            )
+        self.conv_btm = nn.Sequential(
+                            nn.Conv2d(out_feat, n_feat, 1, 1, 0, bias=bias),
+                            nn.Softmax(dim=1)
+                            )
+
+    def forward(self, top, mid, btm):
+        tmp = self.gap(top + mid + btm) # z
+        out = torch.mul(top, self.conv_top(tmp))  # top fusion -> selected
+        out += torch.mul(mid, self.conv_mid(tmp)) # mid fusion -> selected
+        out += torch.mul(btm, self.conv_btm(tmp)) # btm fusion -> selected
+        return out
+
+
+class Upsample(nn.Module):
+    def __init__(self, scale, n_feat, bias=True):
+        super(Upsample, self).__init__()
+        out_feat = int(n_feat // scale)
+
+        self.topline = nn.Sequential(
+                        nn.Conv2d(n_feat, n_feat, 1, 1, 0, bias=bias),
+                        nn.PReLU(),
+                        nn.Conv2d(n_feat, n_feat, 3, 1, 1, bias=bias),
+                        nn.PReLU(),
+                        nn.Upsample(scale_factor=scale, mode='bilinear'),
+                        nn.Conv2d(n_feat, out_feat, 1, 1, 0, bias=bias)
+        )
+
+        self.skipline = nn.Sequential(
+                        nn.Upsample(scale_factor=scale, mode='bilinear'),
+                        nn.Conv2d(n_feat, out_feat, 1, 1, 0, bias=bias)
+        )
+
+    def forward(self, x):
+        skip = self.skipline(x)
+        out = self.topline(x) + skip
+        return out
+
+
+class Downsample(nn.Module):
+    def __init__(self, scale, n_feat, type='antialias', bias=True):
+        super(Downsample, self).__init__()
+        out_feat = scale*n_feat
+
+        if type == 'antialias':
+            self.downsample = Antialiased_downsample(filt_size=3, channels=out_feat)
+        else:
+            self.downsample = nn.MaxPool2d(scale)
+
+        self.topline = nn.Sequential(
+                        nn.Conv2d(n_feat, n_feat, kernel_size=1, padding=0, bias=bias),
+                        nn.PReLU(),
+                        nn.Conv2d(n_feat, n_feat, kernel_size=3, padding=1, bias=bias),
+                        nn.PReLU(),
+                        self.downsample,
+                        nn.Conv2d(out_feat, out_feat, kernel_size=1, padding=0, bias=bias)
+        )
+
+        self.skipline = nn.Sequential(
+                        self.downsample,
+                        nn.Conv2d(out_feat, out_feat, kernel_size=1, padding=0, bias=bias)
+        )
+
+    def forward(self, x):
+        skip = self.skipline(x)
+        out = self.topline(x) + skip
+        return out
+
+'''
+Paper: http://proceedings.mlr.press/v97/zhang19a/zhang19a.pdf
+Code: https://richzhang.github.io/antialiased-cnns/
+'''
+class Antialiased_downsample(nn.Module):
+    def __init__(self, pad_type='reflect', filt_size=3, stride=2, channels=None, pad_off=0):
+        super(Antialiased_downsample, self).__init__()
+        self.filt_size = filt_size
+        self.pad_off = pad_off
+        self.pad_sizes = [int(1.*(filt_size-1)/2), int(np.ceil(1.*(filt_size-1)/2)), int(1.*(filt_size-1)/2), int(np.ceil(1.*(filt_size-1)/2))]
+        self.pad_sizes = [pad_size+pad_off for pad_size in self.pad_sizes]
+        self.stride = stride
+        self.off = int((self.stride-1)/2.)
+        self.channels = channels
+
+        # print('Filter size [%i]'%filt_size)
+        if(self.filt_size==1):
+            a = np.array([1.,])
+        elif(self.filt_size==2):
+            a = np.array([1., 1.])
+        elif(self.filt_size==3):
+            a = np.array([1., 2., 1.])
+        elif(self.filt_size==4):
+            a = np.array([1., 3., 3., 1.])
+        elif(self.filt_size==5):
+            a = np.array([1., 4., 6., 4., 1.])
+        elif(self.filt_size==6):
+            a = np.array([1., 5., 10., 10., 5., 1.])
+        elif(self.filt_size==7):
+            a = np.array([1., 6., 15., 20., 15., 6., 1.])
+
+        filt = torch.Tensor(a[:,None]*a[None,:])
+        filt = filt/torch.sum(filt)
+        self.register_buffer('filt', filt[None,None,:,:].repeat((self.channels,1,1,1)))
+
+        self.pad = get_pad_layer(pad_type)(self.pad_sizes)
+
+    def forward(self, inp):
+        if(self.filt_size==1):
+            if(self.pad_off==0):
+                return inp[:,:,::self.stride,::self.stride]
+            else:
+                return self.pad(inp)[:,:,::self.stride,::self.stride]
+        else:
+            return F.conv2d(self.pad(inp), self.filt, stride=self.stride, groups=inp.shape[1])
+
+
+def get_pad_layer(pad_type):
+    if(pad_type in ['refl','reflect']):
+        PadLayer = nn.ReflectionPad2d
+    elif(pad_type in ['repl','replicate']):
+        PadLayer = nn.ReplicationPad2d
+    elif(pad_type=='zero'):
+        PadLayer = nn.ZeroPad2d
+    else:
+        print('Pad type [%s] not recognized'%pad_type)
+    return PadLayer
+
             

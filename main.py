@@ -64,7 +64,7 @@ class ImageProcessor:
     def train(self):
         self.model.train()
         val_loss, val_psnr = self.evaluate(self.step - 1, self.start_epoch)
-        print("[*] Preliminary check: Epoch: {} Step: {} Validation Loss: {.5e} PSNR: {.2e}".format(
+        print("[*] Preliminary check: Epoch: {} Step: {} Validation Loss: {} PSNR: {}".format(
             self.start_epoch,
             (self.step-1),
             val_loss,
@@ -100,7 +100,7 @@ class ImageProcessor:
                     self.writer.add_scalar("Stats/PSNR", val_psnr, self.step)
 
 
-                    print("[{}/{}/{}] Loss [T/V]: [{.5e}/{.5e}] PSNR: {.3e} LR: {} Time: {.1e} Output: [{}-{}]".format(
+                    print("[{}/{}/{}] Loss [T/V]: [{:.5f}/{:.5f}] PSNR: {:.3f} LR: {} Time: {.1e} Output: [{}-{}]".format(
                         epoch, self.step, idx,
                         (step_loss/self.cfg.verbose_step), val_loss,
                         val_psnr,
@@ -209,7 +209,7 @@ class ImageProcessor:
                 shuffle=True,
                 num_workers=self.cfg.num_workers,
                 pin_memory=True,
-                drop_last=True     
+                drop_last=True    # easier to estimate PSNR, loss, etc. 
             )
 
             valid_dataset = LoadData(self.cfg.data_dir, test=True)
@@ -219,7 +219,7 @@ class ImageProcessor:
                 shuffle=True,
                 num_workers=self.cfg.num_workers,
                 pin_memory=True,
-                drop_last=True  # easier to estimate PSNR, loss, etc.
+                drop_last=True 
             )
 
             print(f"[*] Trainset:    {self.cfg.batch_size} x {len(self.train_loader)}")
