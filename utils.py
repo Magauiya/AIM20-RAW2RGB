@@ -81,7 +81,7 @@ def reduce_sum(x, axis=None, keepdim=False):
     return x
 
 
-def default_conv(in_channels, out_channels, kernel_size,stride=1, bias=True):
+def default_conv(in_channels, out_channels, kernel_size, stride=1, bias=True):
     return nn.Conv2d(
         in_channels, out_channels, kernel_size,
         padding=(kernel_size//2),stride=stride, bias=bias)

@@ -1,21 +1,20 @@
 import os
 import random
+import hydra
+import time
 import numpy as np
 from sklearn import metrics
 from skimage.measure import compare_psnr as PSNR
 
-# Hydra <- yaml
-import hydra
-import numpy as np
 # PyTorch
 import torch
 import torch.nn as nn
-from skimage.metrics import peak_signal_noise_ratio as PSNR
 from torch.optim import lr_scheduler
+from torchvision.utils import save_image
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from torchvision.utils import save_image, make_grid
-# my files
+
+# OWN
 import loss
 import model
 from dataloader import LoadData
@@ -27,104 +26,137 @@ class ImageProcessor:
         self.steplr = cfg.steplr
         self.plateau = cfg.plateau
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"Device: {self.device}")
-        print(f"Path: {self.cfg.data_dir}")
 
     def build(self):
-        self.criterion = loss.Loss(self.cfg, self.device)
+        
+        # MODEL
         model_name = self.cfg.model_name
-
         if model_name not in dir(model):
             model_name = "PDANet"
-
-        print(f"Model choice: {self.cfg.model_name}")
         self.model = getattr(model, model_name)(cfg=self.cfg).to(self.device)
-
         self.model = nn.DataParallel(self.model)
+        if self.cfg.net_verbose:
+            summary(self.model, (4, 224, 224))
+
+        print('-' * 40)
+        print(f"[*] Model: {self.cfg.model_name}")
+        print(f"[*] Device: {self.device}")
+        print(f"[*] Path: {self.cfg.data_dir}")
+
+        # OPTIMIZER
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr_init)
+
+        # LOSS
+        self.criterion = loss.Loss(self.cfg, self.device)
+
+        # SCHEDULER
         if self.cfg.scheduler == "step":
             self.lr_sch = lr_scheduler.StepLR(self.optimizer, **self.steplr)
         else:
             self.lr_sch = lr_scheduler.ReduceLROnPlateau(self.optimizer, **self.plateau)
 
+        # INITIALIZE: dirs, ckpts, data loaders
         self._make_dir()
         self._load_ckpt()
         self._load_data()
         self.writer = SummaryWriter(log_dir=self.cfg.logs_path)
 
     def train(self):
-        tb_iter = self.step
-        # Validation of the loaded ckpt (if it exists) before the training starts
-        self.evaluate(tb_iter - 1, self.start_epoch)
+        self.model.train()
+        val_loss, val_psnr = self.evaluate(self.step - 1, self.start_epoch)
+        print("[*] Preliminary check: Epoch: {} Step: {} Validation Loss: {.5e} PSNR: {.2e}".format(
+            self.start_epoch,
+            (self.step-1),
+            val_loss,
+            val_psnr
+            ))
+        print('-' * 40)
 
         # Resume training from stopped epoch
         for epoch in range(self.start_epoch, self.cfg.num_epochs):
-            print('Epoch {}/{}'.format(epoch, self.cfg.num_epochs - 1))
-            print('-' * 10)
-
-            self.model.train()
 
             step_loss = 0
+            start_time = time.time()
+
             for idx, (noisy, clean) in enumerate(self.train_loader, start=1):
+                # Input/Target 
                 noisy = noisy.to(self.device, dtype=torch.float)
                 clean = clean.to(self.device, dtype=torch.float)
+
+                # BackProp
                 self.optimizer.zero_grad()
                 output = self.model(noisy)
                 loss = self.criterion(output, clean)
                 loss.backward()
                 self.optimizer.step()
+
+                # STATS
                 step_loss += loss.item()
-
                 if idx % self.cfg.verbose_step == 0:
-                    self.evaluate(tb_iter, epoch)
-                    self.writer.add_scalar("Train/Loss", step_loss / self.cfg.verbose_step, tb_iter)
-                    self.writer.add_scalar("Train/LR", self.optimizer.param_groups[0]['lr'], tb_iter)
-                    print(f'[{tb_iter:3}/{epoch:3}/{idx:4}] Train loss: {loss:.5e}')
+                    val_loss, val_psnr = self.evaluate(self.step, epoch)
+                    self.writer.add_scalar("Loss/Train", step_loss / self.cfg.verbose_step, self.step)
+                    self.writer.add_scalar("Loss/Validation", val_loss, self.step)
+                    self.writer.add_scalar("Stats/LR", self.optimizer.param_groups[0]['lr'], self.step)
+                    self.writer.add_scalar("Stats/PSNR", val_psnr, self.step)
 
-                    tb_iter += 1
-                    step_loss = 0
 
+                    print("[{}/{}/{}] Loss [T/V]: [{.5e}/{.5e}] PSNR: {.3e} LR: {} Time: {.1e} Output: [{}-{}]".format(
+                        epoch, self.step, idx,
+                        (step_loss/self.cfg.verbose_step), val_loss,
+                        val_psnr,
+                        self.optimizer.param_groups[0]['lr'],
+                        (time.time()-start_time),
+                        torch.min(output).item(),
+                        torch.max(output).item()
+                        ))
+
+                    self.step += 1
+                    self.lr_sch.step(metrics=val_loss) 
+                    step_loss, start_time = 0, time.time()
+                    self.model.train()
+
+
+    @torch.no_grad()
     def evaluate(self, step, epoch):
         self.model.eval()
         running_loss = 0
         running_psnr = 0
 
-        with torch.no_grad():
-            for idx, (noisy, clean) in enumerate(self.valid_loader):
-                noisy = noisy.to(self.device, dtype=torch.float)
-                clean = clean.to(self.device, dtype=torch.float)
-                output = self.model(noisy)
+        for idx, (noisy, clean) in enumerate(self.valid_loader):
+            noisy = noisy.to(self.device, dtype=torch.float)
+            clean = clean.to(self.device, dtype=torch.float)
+            output = self.model(noisy)
 
-                if idx == 1:
-                    save_image(output, 'step_%d_output.png'%step, nrow=4)
-                    save_image(clean, 'step_%d_clean.png'%step, nrow=4)
-                
-                loss = self.criterion(output, clean)
-                running_loss += loss.item()
+            if idx == 1:
+                save_image(output, 'step_%d_output.png'%step, nrow=4)
+                save_image(clean, 'step_%d_clean.png'%step, nrow=4)
+            
+            loss = self.criterion(output, clean)
+            running_loss += loss.item()
 
-                clean = clean.cpu().detach().numpy()
-                output = np.clip(output.cpu().detach().numpy(), 0., 1.)
+            clean = clean.cpu().detach().numpy()
+            output = np.clip(output.cpu().detach().numpy(), 0., 1.)
 
-                # ------------ PSNR ------------
-                for m in range(self.cfg.batch_size):
-                    running_psnr += PSNR(clean[m], output[m])
+            # ------------ PSNR ------------
+            for m in range(self.cfg.batch_size):
+                running_psnr += PSNR(clean[m], output[m])
 
-            epoch_loss = running_loss / (len(self.valid_loader)*self.cfg.batch_size)
-            epoch_psnr = running_psnr / (len(self.valid_loader)*self.cfg.batch_size)
+        epoch_loss = running_loss / (len(self.valid_loader)*self.cfg.batch_size)
+        epoch_psnr = running_psnr / (len(self.valid_loader)*self.cfg.batch_size)
 
-            print(f'Val Loss: {epoch_loss:.3}, PSNR:{epoch_psnr:.3}')
+        ckpt_name = f"step_{step}_epoch_{epoch}_val_loss_{epoch_loss:.3}_psnr_{epoch_psnr:.3}.pth"
 
-            ckpt_name = f"epoch_{step}_val_loss_{epoch_loss:.3}_psnr_{epoch_psnr:.3}.pth"
-            self._save_ckpt(epoch, step, ckpt_name)
-
-            self.writer.add_scalar("Validation/Loss", epoch_loss, step)
-            self.writer.add_scalar("Validation/PSNR", epoch_psnr, step)
-
-        self.lr_sch.step(metrics=epoch_loss)
+        self._save_ckpt(epoch, ckpt_name)
         self.model.train()
+        
+        return epoch_loss, epoch_psnr
 
+
+    @torch.no_grad()
     def test(self):
+        self.model.eval()
         print("Test f-n is WIP")
+
 
     def _load_ckpt(self):
         self.step = 1
@@ -155,35 +187,55 @@ class ImageProcessor:
         else:
             print("[!] NO checkpoint found at '{}'".format(resume_path))
 
-    def _save_ckpt(self, step, epoch, save_file):
+
+    def _save_ckpt(self, epoch, save_file):
         state = {
             'model': self.model.state_dict(),
             'optimizer': self.optimizer.state_dict(),
-            'step': step,
+            'step': self.step,
             'epoch': epoch
         }
         torch.save(state, os.path.join(self.cfg.ckpt_path, save_file))
         del state
 
+
     def _load_data(self):
-        train_dataset = LoadData(self.cfg.data_dir, test=False)
-        self.train_loader = DataLoader(
-            dataset=train_dataset,
-            batch_size=self.cfg.batch_size,
-            shuffle=True,
-            num_workers=self.cfg.num_workers,
-            pin_memory=True,
-            drop_last=True
-        )
-        valid_dataset = LoadData(self.cfg.data_dir, test=True)
-        self.valid_loader = DataLoader(
-            dataset=valid_dataset,
-            batch_size=self.cfg.batch_size,
-            shuffle=True,
-            num_workers=self.cfg.num_workers,
-            pin_memory=True,
-            drop_last=True
-        )
+
+        if not self.cfg.inference:
+            train_dataset = LoadData(self.cfg.data_dir, test=False)
+            self.train_loader = DataLoader(
+                dataset=train_dataset,
+                batch_size=self.cfg.batch_size,
+                shuffle=True,
+                num_workers=self.cfg.num_workers,
+                pin_memory=True,
+                drop_last=True     
+            )
+
+            valid_dataset = LoadData(self.cfg.data_dir, test=True)
+            self.valid_loader = DataLoader(
+                dataset=valid_dataset,
+                batch_size=self.cfg.batch_size,
+                shuffle=True,
+                num_workers=self.cfg.num_workers,
+                pin_memory=True,
+                drop_last=True  # easier to estimate PSNR, loss, etc.
+            )
+
+            print(f"[*] Trainset:    {self.cfg.batch_size} x {len(self.train_loader)}")
+            print(f"[*] Validset:    {self.cfg.batch_size} x {len(self.valid_loader)}")
+
+        else:
+            test_dataset = LoadTestData(self.cfg.data_dir, level=2, full_resolution=False)
+            self.test_loader = DataLoader(
+                dataset=test_dataset,
+                batch_size=1,
+                shuffle=False,
+                num_workers=self.cfg.num_workers,
+                pin_memory=True,
+                drop_last=False
+            )
+
 
     def _make_dir(self):
         # Output path: ckpts, imgs, etc.
@@ -213,9 +265,11 @@ def main(cfg):
 
     app = ImageProcessor(cfg)
     app.build()
-    if not cfg.parameters.inference:
+
+    if cfg.parameters.inference:
+        app.test()
+    else:
         app.train()
-    app.test()
 
 
 if __name__ == "__main__":

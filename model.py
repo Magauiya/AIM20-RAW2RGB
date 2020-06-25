@@ -13,8 +13,8 @@ class PDANet(nn.Module):
         super(PDANet, self).__init__()
         self.kernel_size = 3
         self.features = 64
-        self.in_channel = 4#cfg.in_channel
-        self.out_channel = 3#cfg.out_channel
+        self.in_channel = cfg.in_channel
+        self.out_channel = cfg.out_channel
 
         m_head = [
                     utils.default_conv(self.in_channel, self.features, self.kernel_size),
@@ -23,8 +23,10 @@ class PDANet(nn.Module):
                  ]
 
         m_tail = [
-                    utils.Upsampler(utils.default_conv, 2, self.features, act=False),
-                    utils.default_conv(self.features, self.out_channel, kernel_size=1)
+                    nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+                    utils.default_conv(self.features, self.out_channel, self.kernel_size),
+                    nn.ReLU(),
+                    utils.default_conv(self.out_channel, self.out_channel, kernel_size=1)
                  ]
 
         self.head = nn.Sequential(*m_head)
@@ -73,8 +75,7 @@ class Up(nn.Module):
 
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         self.attention = nn.Sequential(
-            utils.BasicBlock(utils.default_conv, in_channels, out_channels),
-            DAU(out_channels)
+            utils.BasicBlock(utils.default_conv, in_channels, out_channels)
         )
 
 
@@ -211,7 +212,7 @@ class DAU(nn.Module):
 
         # Spatial Attention
         gmp, _ = torch.max(feat, dim=1, keepdim=True)  # max pool over channels
-        gap = torch.mean(feat, dim=1, keepdim=True) # average pool over channels
+        gap = torch.mean(feat, dim=1, keepdim=True)    # average pool over channels
 
         sp_map = self.spatial(torch.cat([gap, gmp], axis=1))
         sp_at = torch.mul(sp_map, feat)
@@ -237,52 +238,4 @@ class RPAB(nn.Module):
         return out
 
 
-class PANET(nn.Module):
-    def __init__(self, cfg, conv=utils.default_conv):
-        super(PANET, self).__init__()
-
-        n_resblocks = 80
-        n_feats = 64
-        kernel_size = 3 
-        scale = 2
-
-        msa = nn.Sequential(
-            conv(n_feats, n_feats, 3, 2, 1),
-            PyramidAttention(level=4),
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        )
-                                                             
-        # define head module
-        m_head = [conv(4, n_feats, kernel_size)]
-
-        # define body module
-        
-        m_body = [
-            utils.ResBlock(
-                conv, n_feats, kernel_size, nn.PReLU()) for _ in range(n_resblocks//2)
-        ]
-        
-        m_body.append(msa)
-        
-        
-        for i in range(n_resblocks//2):
-            m_body.append(utils.ResBlock(conv,n_feats,kernel_size,nn.PReLU()))
-        m_body.append(conv(n_feats, n_feats, kernel_size))
-        
-        
-        # define tail module
-        m_tail = [
-            utils.Upsampler(conv, scale, n_feats, act=False),
-            conv(n_feats, 3, kernel_size)
-        ]
-
-        self.head = nn.Sequential(*m_head)
-        self.body = nn.Sequential(*m_body)
-        self.tail = nn.Sequential(*m_tail)
-
-    def forward(self, x):
-        out = self.head(x)
-        res = self.body(out)
-        out = res + out
-        out = self.tail(out)
-        return out
+            

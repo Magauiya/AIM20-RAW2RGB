@@ -19,7 +19,7 @@ not implemented:
 class Loss(nn.modules.loss._Loss):
     def __init__(self, args, device):
         super(Loss, self).__init__()
-        print('Preparing loss function:')
+        print('[*] Preparing loss function:')
 
         self.loss = []
         self.loss_module = nn.ModuleList()
@@ -44,7 +44,7 @@ class Loss(nn.modules.loss._Loss):
 
         for l in self.loss:
             if l['function'] is not None:
-                print('{:.3f} * {}'.format(l['weight'], l['type']))
+                print('\t {:.3f} * {}'.format(l['weight'], l['type']))
                 self.loss_module.append(l['function'])
 
         self.loss_module.to(device)
