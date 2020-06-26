@@ -100,7 +100,7 @@ class ImageProcessor:
                     self.writer.add_scalar("Stats/PSNR", val_psnr, self.step)
 
 
-                    print("[{}/{}/{}] Loss [T/V]: [{:.5f}/{:.5f}] PSNR: {:.3f} LR: {} Time: {.1e} Output: [{}-{}]".format(
+                    print("[{}/{}/{}] Loss [T/V]: [{:.5f}/{:.5f}] PSNR: {:.3f} LR: {} Time: {:.1f} Output: [{}-{}]".format(
                         epoch, self.step, idx,
                         (step_loss/self.cfg.verbose_step), val_loss,
                         val_psnr,

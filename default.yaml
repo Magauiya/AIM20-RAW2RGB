@@ -10,14 +10,14 @@ parameters:
   loss: "1.0*L1"
   model_name: "PDANet"
   img_size: 448
-  num_epochs: 100
+  num_epochs: 50
   batch_size: 4
   num_workers: 12
   lr_init: 1.e-3
   lr_step: 25
   lr_gamma: 0.5
   random_seed: 42
-  verbose_step: 500
+  verbose_step: 1000
   requires_grad: True
   inference: False
   optim_reset: False
@@ -32,7 +32,7 @@ steplr:
 
 plateau:
   mode: 'min' 
-  factor: 0.8
+  factor: 0.75
   patience: 1
   verbose: False
   threshold: 0.0001
