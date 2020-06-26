@@ -8,16 +8,16 @@ parameters:
   ckpt_path: "ckpt"
   logs_path: "log"
   loss: "1.0*L1"
-  model_name: "PDANet"
+  model_name: "MIRNet"
   img_size: 448
   num_epochs: 50
-  batch_size: 4
+  batch_size: 2
   num_workers: 12
   lr_init: 1.e-3
   lr_step: 25
   lr_gamma: 0.5
   random_seed: 42
-  verbose_step: 1000
+  verbose_step: 10
   requires_grad: True
   inference: False
   optim_reset: False
@@ -25,6 +25,14 @@ parameters:
   out_channel: 3
   scheduler: "plateau"
   net_verbose: False
+  features: 64
+  scale: 2
+  n_resblocks: 2
+  n_resgroups: 1
+  bias: True
+  kernel_size: 3
+  reduction: 8
+  dw_type: "antialias"
 
 steplr:
   step_size: 70
@@ -32,7 +40,7 @@ steplr:
 
 plateau:
   mode: 'min' 
-  factor: 0.75
+  factor: 0.8
   patience: 1
   verbose: False
   threshold: 0.0001

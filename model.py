@@ -1,3 +1,4 @@
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -238,39 +239,46 @@ class RPAB(nn.Module):
         return out
 
 
+
+            
+
+
 # MIRNet based model WIP
 class MIRNet(nn.Module):
     def __init__(self, cfg):
         super(MIRNet, self).__init__()
 
         # Params
-        self.kernel_size = 3
-        self.features = 64
         self.in_channel = cfg.in_channel
         self.out_channel = cfg.out_channel
+        self.features = cfg.features
+        self.kernel_size = cfg.kernel_size
+        self.bias = cfg.bias
 
-        N_rrg = 3
+        N_rrg = cfg.n_resgroups
+        scale = 2
 
         # Shallow features
-        self.head = nn.Conv2d(self.in_channel, self.features, 3, 1, 1, bias=bias)
-        self.rrg = nn.ModuleList([RRG(args) for _ in range(N_rrg)])
+        self.head = nn.Conv2d(self.in_channel, self.features, 3, 1, 1, bias=self.bias)
+        # self.rrg = nn.ModuleList([RRG(cfg) for _ in range(N_rrg)])
+        self.rrg = RRG(cfg)
+
         self.tale = nn.Sequential(
-                nn.Conv2d(self.features, self.out_channel, 3, 1, 1, bias=bias),
+                Upscaling(scale, n_feat=self.features),
+                nn.Conv2d(self.features//scale, self.out_channel, 3, 1, 1, bias=self.bias),
                 nn.ReLU(),
-                nn.Conv2d(self.out_channel, self.out_channel, 1, 1, 0, bias=bias)
+                nn.Conv2d(self.out_channel, self.out_channel, 1, 1, 0, bias=self.bias)
                 )
 
     def forward(self, x):
-        out = self.head(x)
-        for i, group in enumerate(self.rrg):
-            out = group(out)
-
+        x = self.head(x)
+        out = self.rrg(x) + x
         out = self.tale(out)
         return out
 
 
 class MRB(nn.Module):
-    def __init__(self, n_feat=64, reduction=8, scale=2, type='antialias'):
+    def __init__(self, n_feat=64, reduction=8, scale=2, dw_type='antialias'):
         super(MRB, self).__init__()
 
         downX2 = n_feat*scale
@@ -279,33 +287,33 @@ class MRB(nn.Module):
         # Pre DAU
         self.top_dau_pre = DAU(n_feat, reduction)
         self.mid_dau_pre = nn.Sequential(
-                                Downsample(scale, n_feat, type),
+                                Downscaling(scale, n_feat, dw_type),
                                 DAU(downX2, reduction)
                                 )
         self.btm_dau_pre = nn.Sequential(
-                                Downsample(scale, n_feat, type),
-                                Downsample(scale, downX2, type),
+                                Downscaling(scale, n_feat, dw_type),
+                                Downscaling(scale, downX2, dw_type),
                                 DAU(downX4, reduction)
                                 )
 
         # to the TOP
         self.btm2top = nn.Sequential(
-                                Upsample(2, downX4),
-                                Upsample(2, downX2)
+                                Upscaling(2, downX4),
+                                Upscaling(2, downX2)
                                 )
-        self.mid2top = Upsample(2, downX2)
+        self.mid2top = Upscaling(2, downX2)
 
         # to the MID
-        self.top2mid = Downsample(2, n_feat, type)
-        self.btm2mid = Upsample(2, downX4)
+        self.top2mid = Downscaling(2, n_feat, dw_type)
+        self.btm2mid = Upscaling(2, downX4)
 
         # to the BTM
         self.top2btm = nn.Sequential(
-                                Downsample(2, n_feat, type),
-                                Downsample(2, downX2, type)
+                                Downscaling(2, n_feat, dw_type),
+                                Downscaling(2, downX2, dw_type)
                                 )
 
-        self.mid2btm = Downsample(2, downX2, type)
+        self.mid2btm = Downscaling(2, downX2, dw_type)
 
         # SKFF
         self.top_skff = SKFF(n_feat)
@@ -316,12 +324,12 @@ class MRB(nn.Module):
         self.top_dau_pos = DAU(n_feat, reduction)
         self.mid_dau_pos = nn.Sequential(
                                 DAU(downX2, reduction),
-                                Upsample(2, downX2)
+                                Upscaling(2, downX2)
                                 )
         self.btm_dau_pos = nn.Sequential(
                                 DAU(downX4, reduction),
-                                Upsample(2, downX4),
-                                Upsample(2, downX2)
+                                Upscaling(2, downX4),
+                                Upscaling(2, downX2)
                                 )
         # Tale
         self.skff_last = SKFF(n_feat)
@@ -349,19 +357,19 @@ class MRB(nn.Module):
 
 
 class RRG(nn.Module):
-    def __init__(self, args):
+    def __init__(self, cfg):
         super(RRG, self).__init__()
 
-        n_feat = args.n_feat
-        reduction = args.reduction
-        type = args.downsample
-        scale = args.scale
-        N_mrb = args.n_resblocks
-        bias = args.bias
+        n_feat = cfg.features
+        reduction = cfg.reduction
+        scale = cfg.scale
+        N_mrb = cfg.n_resblocks
+        bias  = cfg.bias
+        dw_type = cfg.dw_type
 
         self.head = nn.Conv2d(n_feat, n_feat, 3, 1, 1, bias=bias)
         self.mrb = nn.ModuleList(
-                    [MRB(n_feat, reduction, scale, type) for _ in range(N_mrb)]
+                    [MRB(n_feat, reduction, scale, dw_type) for _ in range(N_mrb)]
                     )
         self.tale = nn.Conv2d(n_feat, n_feat, 3, 1, 1, bias=bias)
 
@@ -370,7 +378,7 @@ class RRG(nn.Module):
         for i, block in enumerate(self.mrb):
             out = block(out)
 
-        out = self.tale(out) + x
+        out = self.tale(out)
         return out
 
 
@@ -406,9 +414,9 @@ class SKFF(nn.Module):
         return out
 
 
-class Upsample(nn.Module):
+class Upscaling(nn.Module):
     def __init__(self, scale, n_feat, bias=True):
-        super(Upsample, self).__init__()
+        super(Upscaling, self).__init__()
         out_feat = int(n_feat // scale)
 
         self.topline = nn.Sequential(
@@ -431,12 +439,12 @@ class Upsample(nn.Module):
         return out
 
 
-class Downsample(nn.Module):
-    def __init__(self, scale, n_feat, type='antialias', bias=True):
-        super(Downsample, self).__init__()
+class Downscaling(nn.Module):
+    def __init__(self, scale, n_feat, dw_type='antialias', bias=True):
+        super(Downscaling, self).__init__()
         out_feat = scale*n_feat
 
-        if type == 'antialias':
+        if dw_type == 'antialias':
             self.downsample = Antialiased_downsample(filt_size=3, channels=out_feat)
         else:
             self.downsample = nn.MaxPool2d(scale)
@@ -517,5 +525,3 @@ def get_pad_layer(pad_type):
     else:
         print('Pad type [%s] not recognized'%pad_type)
     return PadLayer
-
-            
