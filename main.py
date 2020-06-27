@@ -111,7 +111,11 @@ class ImageProcessor:
                         ))
 
                     self.step += 1
-                    self.lr_sch.step(metrics=val_loss) 
+                    if self.cfg.scheduler == "step":
+                        self.lr_sch.step()
+                    elif self.cfg.scheduler == "plateau":
+                        self.lr_sch.step(metrics=val_loss) 
+                    
                     step_loss, start_time = 0, time.time()
                     self.model.train()
 
