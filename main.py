@@ -18,7 +18,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 # my files
-import loss
+import loss as LOSS
 import model
 from dataloader import LoadData
 
@@ -31,7 +31,7 @@ class ImageProcessor:
         print(f"Path: {self.cfg.data_dir}")
 
     def build(self):
-        self.criterion = loss.Loss(self.cfg, self.device)
+        self.criterion = LOSS.Loss(self.cfg, self.device)
         model_name = self.cfg.model_name
 
         if model_name not in dir(model):
@@ -116,6 +116,61 @@ class ImageProcessor:
 
     def test(self):
         print("Test f-n is WIP")
+        # currently only for checking CycleISP
+        self.criterion = LOSS.Loss(self.cfg, self.device)
+        raw2rgb_name = 'Raw2Rgb'
+        ccm_name = 'CCM'
+        #rgb2raw_name = 'Rgb2Raw'
+        print(f"Model choice: {raw2rgb_name}")
+
+        self.raw2rgb = getattr(model, raw2rgb_name)(cfg=self.cfg).to(self.device)
+        self.ccm = getattr(model, ccm_name)(cfg=self.cfg).to(self.device)
+        # self.rgb2raw = getattr(model, rgb2raw_name)(cfg=self.cfg).to(self.device)
+
+        # self.raw2rgb = nn.DataParallel(self.raw2rgb)
+        # self.ccm = nn.DataParallel(self.ccm)
+
+        #Load checkpoint
+        raw2rgb_checkpoint_path = '/Users/yeskendir/Desktop/AIM2020/raw2rgb_joint.pth'
+        ccm_checkpoint_path = '/Users/yeskendir/Desktop/AIM2020/ccm_joint.pth'
+
+        raw2rgb_checkpoint = torch.load(raw2rgb_checkpoint_path, map_location='cpu')
+        ccm_checkpoint = torch.load(ccm_checkpoint_path, map_location='cpu'
+                                    )
+
+        self.raw2rgb.load_state_dict(raw2rgb_checkpoint["state_dict"])
+        self.ccm.load_state_dict(ccm_checkpoint["state_dict"])
+
+        self.raw2rgb.eval()
+        self.ccm.eval()
+
+        running_loss = 0
+        running_psnr = 0
+
+        self._load_data()
+
+        with torch.no_grad():
+            for raw, rgb in tqdm(self.valid_loader):
+                raw = raw.to(self.device, dtype=torch.float)
+                rgb = rgb.to(self.device, dtype=torch.float)
+
+                ccm_out = self.ccm(rgb)
+                pred_rgb = self.raw2rgb(raw, ccm_out)
+                loss = self.criterion(pred_rgb, rgb)
+                running_loss += loss.item()
+
+                rgb = rgb.cpu().detach().numpy()
+                pred_rgb = np.clip(pred_rgb.cpu().detach().numpy(), 0., 1.)
+
+                for m in range(self.cfg.batch_size):
+                    running_psnr += PSNR(rgb[m], pred_rgb[m])
+
+            epoch_loss = running_loss / len(self.valid_loader)
+            epoch_psnr = running_psnr / len(self.valid_loader)
+
+            print(f'Val Loss: {epoch_loss:.3}, PSNR:{epoch_psnr:.3}')
+
+
 
     def _load_ckpt(self):
         self.step = 1
@@ -203,9 +258,9 @@ def main(cfg):
     torch.backends.cudnn.deterministic = True
 
     app = ImageProcessor(cfg.parameters)
-    app.build()
-    if not cfg.parameters.inference:
-        app.train()
+    #app.build()
+    #if not cfg.parameters.inference:
+    #    app.train()
     app.test()
 
 

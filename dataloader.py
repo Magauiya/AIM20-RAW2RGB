@@ -60,6 +60,7 @@ class LoadData(Dataset):
         dslr_image = np.asarray(dslr_image, dtype=np.float32)
         dslr_image = torch.from_numpy(dslr_image.transpose((2, 0, 1)))
 
+
         if not self.test:
             raw_image, dslr_image = self._transform(raw_image, dslr_image)
 

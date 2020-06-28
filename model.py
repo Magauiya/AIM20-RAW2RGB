@@ -32,6 +32,55 @@ class UNET(nn.Module):
         return out
 
 
+class Raw2Rgb(nn.Module):
+    def __init__(self, cfg, conv=conv):
+        super(Raw2Rgb, self).__init__()
+        input_nc = 4
+        output_nc = 3
+
+        num_rrg = 3
+        num_dab = 5
+        n_feats = 96
+        kernel_size = 3
+        reduction = 8
+
+        act = nn.PReLU(n_feats)
+
+        modules_head = [conv(input_nc, n_feats, kernel_size=kernel_size, stride=1)]
+
+        modules_body = [
+            RRG(
+                conv, n_feats, kernel_size, reduction, act=act, num_dab=num_dab) \
+            for _ in range(num_rrg)]
+
+        modules_body.append(conv(n_feats, n_feats, kernel_size))
+        modules_body.append(act)
+
+        modules_tail = [conv(n_feats, n_feats, kernel_size), act]
+        modules_tail_rgb = [conv(n_feats, output_nc * 4, kernel_size=1)]  # , nn.Sigmoid()]
+
+        self.head = nn.Sequential(*modules_head)
+        self.body = nn.Sequential(*modules_body)
+        self.tail = nn.Sequential(*modules_tail)
+        self.tail_rgb = nn.Sequential(*modules_tail_rgb)
+
+        conv1x1 = [conv(n_feats * 2, n_feats, kernel_size=1)]
+        self.conv1x1 = nn.Sequential(*conv1x1)
+
+    def forward(self, x, ccm_feat):
+        x = self.head(x)
+        for i in range(len(self.body) - 1):
+            x = self.body[i](x)
+        body_out = x.clone()
+        x = x * ccm_feat  ## Attention
+        x = x + body_out
+        x = self.body[-1](x)
+        x = self.tail(x)
+        x = self.tail_rgb(x)
+        x = nn.functional.pixel_shuffle(x, 2)
+        return x
+
+
 '''
 Raw2Rgb from CycleISP
 source: https://github.com/swz30/CycleISP/blob/master/networks/cycleisp.py
@@ -71,11 +120,110 @@ class RRGNet(nn.Module):
         conv1x1 = [conv(self.n_feats * 2, self.n_feats, kernel_size=1)]
         self.conv1x1 = nn.Sequential(*conv1x1)
 
-    def forward(self, x):
+    def forward(self, x, ccm_feat):
         x = self.head(x)
-        for i in range(len(self.body)):
+        # without color attention
+        # for i in range(len(self.body)):
+        #     x = self.body[i](x)
+
+        # with color attention
+        for i in range(len(self.body) - 1):
             x = self.body[i](x)
+        body_out = x.clone()
+        x = x * ccm_feat  ## Attention
+        x = x + body_out
+        x = self.body[-1](x)
+
         x = self.tail(x)
         x = self.tail_rgb(x)
         x = nn.functional.pixel_shuffle(x, 2)
         return x
+
+
+'''
+Color Correction Network
+'''
+
+
+class CCM(nn.Module):
+    def __init__(self, cfg, conv=conv):
+        super(CCM, self).__init__()
+        input_nc = 3
+        output_nc = 96
+
+        num_rrg = 2
+        num_dab = 2
+        n_feats = 96
+        kernel_size = 3
+        reduction = 8
+
+        sigma = 12  ## GAUSSIAN_SIGMA
+
+        act = nn.PReLU(n_feats)
+
+        modules_head = [conv(input_nc, n_feats, kernel_size=kernel_size, stride=1)]
+
+        modules_downsample = [nn.MaxPool2d(kernel_size=2)]
+        self.downsample = nn.Sequential(*modules_downsample)
+
+        modules_body = [
+            RRG(
+                conv, n_feats, kernel_size, reduction, act=act, num_dab=num_dab) \
+            for _ in range(num_rrg)]
+
+        modules_body.append(conv(n_feats, n_feats, kernel_size))
+        modules_body.append(act)
+
+        modules_tail = [conv(n_feats, output_nc, kernel_size), nn.Sigmoid()]
+
+        self.head = nn.Sequential(*modules_head)
+        self.body = nn.Sequential(*modules_body)
+        self.tail = nn.Sequential(*modules_tail)
+        self.blur, self.pad = get_gaussian_kernel(sigma=sigma)
+
+    def forward(self, x):
+        x = F.pad(x, (self.pad, self.pad, self.pad, self.pad), mode='reflect')
+        x = self.blur(x)
+        x = self.head(x)
+        x = self.downsample(x)
+        x = self.body(x)
+        x = self.tail(x)
+        return x
+
+#
+# class Rgb2Raw(nn.Module):
+#     def __init__(self, conv=conv):
+#         super(Rgb2Raw, self).__init__()
+#         input_nc = 3
+#         output_nc = 4
+#
+#         num_rrg = 3
+#         num_dab = 5
+#         n_feats = 96
+#         kernel_size = 3
+#         reduction = 8
+#
+#         act = nn.PReLU(n_feats)
+#
+#         modules_head = [conv(input_nc, n_feats, kernel_size=kernel_size, stride=1)]
+#
+#         modules_body = [
+#             RRG(
+#                 conv, n_feats, kernel_size, reduction, act=act, num_dab=num_dab) \
+#             for _ in range(num_rrg)]
+#
+#         modules_body.append(conv(n_feats, n_feats, kernel_size))
+#         modules_body.append(act)
+#
+#         modules_tail = [conv(n_feats, 3, kernel_size)]
+#
+#         self.head = nn.Sequential(*modules_head)
+#         self.body = nn.Sequential(*modules_body)
+#         self.tail = nn.Sequential(*modules_tail)
+#
+#     def forward(self, x):
+#         x = self.head(x)
+#         x = self.body(x)
+#         x = self.tail(x)
+#         x = mosaic(x)
+#         return x

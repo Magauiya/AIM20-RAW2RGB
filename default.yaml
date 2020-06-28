@@ -3,7 +3,7 @@ hydra:
     dir: ./output/${parameters.model_name}_${parameters.batch_size}_${parameters.num_epochs}
 
 parameters:
-  data_dir: "/data/ntire20-datasetnoise/" 
+  data_dir: "/Users/yeskendir/Desktop/Zurich-RAW-to-DSLR-Dataset" # "/data/ntire20-datasetnoise/"
   resume: "put-ckpt-name"
   ckpt_path: "ckpt"
   logs_path: "log"
@@ -11,7 +11,7 @@ parameters:
   model_name: "UNET"
   img_size: 512
   num_epochs: 100
-  batch_size: 64
+  batch_size: 1 #64
   num_workers: 12
   lr_init: 1.e-3
   lr_step: 25
