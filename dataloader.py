@@ -27,11 +27,11 @@ class LoadTestData(Dataset):
         self.dataset_dir = dataset_dir
 
     def __len__(self):
-        return len(glob.glob(os.path.join(self.dataset_dir, "*.jpg")))
+        return len(glob.glob(os.path.join(self.dataset_dir, "*.png")))
 
     def __getitem__(self, idx):
 
-        raw_image = np.asarray(imageio.imread(os.path.join(self.dataset_dir, str(idx) + '.jpg')), dtype=np.float32)
+        raw_image = np.asarray(imageio.imread(os.path.join(self.dataset_dir, str(idx) + '.png')), dtype=np.float32)
         raw_image = extract_bayer_channels(raw_image)
         raw_image = torch.from_numpy(raw_image.transpose((2, 0, 1)))
 

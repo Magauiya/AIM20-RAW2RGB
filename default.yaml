@@ -1,6 +1,6 @@
 hydra:
   run:
-    dir: ./output/${parameters.model_name}_${parameters.batch_size}_${parameters.num_epochs}
+    dir: ./
 
 parameters:
   data_dir: "/data/ntire20-datasetnoise/" 
@@ -8,7 +8,7 @@ parameters:
   ckpt_path: "ckpt"
   logs_path: "log"
   loss: "1.0*L1"
-  model_name: "UNET"
+  model_name: "RRGNet"
   img_size: 512
   num_epochs: 100
   batch_size: 64
@@ -26,10 +26,12 @@ parameters:
 
 test:
   batch_size: 1
-  test_dir: "../data/validation/input"
-  output_dir: "../data/submissions/"
+  test_dir: "/root/aim20/data/validation/input"
+  output_dir: "/root/aim20/submissions/"
   subfile: "rrgnet_vanilla"
-  model_name: "UNET"
-  resume: "put-ckpt-name"
+  model_name: "RRGNet"
+  resume: "epoch_74_val_loss_0.0756_psnr_20.8.pth"
   in_channel: 4
   out_channel: 3
+  num_workers: 12
+  tta: False
