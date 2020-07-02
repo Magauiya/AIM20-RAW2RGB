@@ -24,3 +24,12 @@ parameters:
   in_channel: 4
   out_channel: 3
 
+test:
+  batch_size: 1
+  test_dir: "../data/validation/input"
+  output_dir: "../data/submissions/"
+  subfile: "rrgnet_vanilla"
+  model_name: "UNET"
+  resume: "put-ckpt-name"
+  in_channel: 4
+  out_channel: 3
