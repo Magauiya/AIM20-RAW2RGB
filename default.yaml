@@ -8,12 +8,12 @@ parameters:
   ckpt_path: "ckpt"
   logs_path: "log"
   loss: "1.0*L1"
-  model_name: "RRGNet"
+  model_name: "RRDUNet"
   img_size: 512
   num_epochs: 100
   batch_size: 64
   num_workers: 12
-  lr_init: 1.e-3
+  lr_init: 1.e-4
   lr_step: 25
   lr_gamma: 0.5
   random_seed: 42
