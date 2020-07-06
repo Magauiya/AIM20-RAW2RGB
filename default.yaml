@@ -1,6 +1,6 @@
 hydra:
   run:
-    dir: ./
+    dir: ./output/${parameters.model_name}_${parameters.batch_size}_${parameters.num_epochs}
 
 parameters:
   data_dir: "/data/ntire20-datasetnoise/" 
@@ -11,9 +11,9 @@ parameters:
   model_name: "RRDUNet"
   img_size: 512
   num_epochs: 100
-  batch_size: 64
+  batch_size: 16
   num_workers: 12
-  lr_init: 1.e-4
+  lr_init: 2.e-4
   lr_step: 25
   lr_gamma: 0.5
   random_seed: 42
@@ -23,7 +23,24 @@ parameters:
   optim_reset: False
   in_channel: 4
   out_channel: 3
+  scheduler: "step"
+  net_verbose: False
 
+steplr:
+  step_size: 70
+  gamma: 0.5
+
+plateau:
+  mode: 'min' 
+  factor: 0.8
+  patience: 1
+  verbose: False
+  threshold: 0.0001
+  threshold_mode: 'abs'
+  cooldown: 0
+  min_lr: 5.e-6
+  eps: 1.e-8
+  
 test:
   batch_size: 1
   test_dir: "/root/aim20/data/validation/input"

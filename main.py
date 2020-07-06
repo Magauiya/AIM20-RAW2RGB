@@ -1,21 +1,19 @@
 import os
 import random
+import hydra
+import time
 import numpy as np
-from sklearn import metrics
 from skimage.measure import compare_psnr as PSNR
 
-# Hydra <- yaml
-import hydra
-import numpy as np
 # PyTorch
 import torch
 import torch.nn as nn
-from skimage.metrics import peak_signal_noise_ratio as PSNR
 from torch.optim import lr_scheduler
+from torchvision.utils import save_image
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-# my files
+# OWN
 import loss
 import model
 from dataloader import LoadData
@@ -23,98 +21,139 @@ from dataloader import LoadData
 
 class ImageProcessor:
     def __init__(self, cfg):
-        self.cfg = cfg
+        self.cfg = cfg.parameters
+        self.steplr = cfg.steplr
+        self.plateau = cfg.plateau
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    def build(self):
+        
+        # MODEL
+        model_name = self.cfg.model_name
+        if model_name not in dir(model):
+            model_name = "PDANet"
+        self.model = getattr(model, model_name)(cfg=self.cfg).to(self.device)
+        self.model = nn.DataParallel(self.model)
+        if self.cfg.net_verbose:
+            summary(self.model, (4, 224, 224))
+
+        print('-' * 40)
+        print(f"[*] Model: {self.cfg.model_name}")
         print(f"[*] Device: {self.device}")
         print(f"[*] Path: {self.cfg.data_dir}")
 
-    def build(self):
-        self.criterion = loss.Loss(self.cfg, self.device)
-        model_name = self.cfg.model_name
-
-        if model_name not in dir(model):
-            model_name = "UNET"
-
-        print(f"[*] Model: {self.cfg.model_name}")
-        self.model = getattr(model, model_name)(cfg=self.cfg).to(self.device)
-
-        self.model = nn.DataParallel(self.model)
+        # OPTIMIZER
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr_init)
-        self.lr_sch = lr_scheduler.StepLR(self.optimizer, step_size=self.cfg.lr_step, gamma=self.cfg.lr_gamma)
 
+        # LOSS
+        self.criterion = loss.Loss(self.cfg, self.device)
+
+        # SCHEDULER
+        if self.cfg.scheduler == "step":
+            self.lr_sch = lr_scheduler.StepLR(self.optimizer, **self.steplr)
+        else:
+            self.lr_sch = lr_scheduler.ReduceLROnPlateau(self.optimizer, **self.plateau)
+
+        # INITIALIZE: dirs, ckpts, data loaders
         self._make_dir()
         self._load_ckpt()
         self._load_data()
         self.writer = SummaryWriter(log_dir=self.cfg.logs_path)
 
     def train(self):
-        tb_iter = self.step
-        # Validation of the loaded ckpt (if it exists) before the training starts
-        self.evaluate(tb_iter - 1, self.start_epoch)
+        self.model.train()
+        val_loss, val_psnr = self.evaluate(self.step - 1, self.start_epoch)
+        print("[*] Preliminary check: Epoch: {} Step: {} Validation Loss: {:.5f} PSNR: {:.3f}".format(
+            self.start_epoch,
+            (self.step-1),
+            val_loss,
+            val_psnr
+            ))
+        print('-' * 40)
 
         # Resume training from stopped epoch
         for epoch in range(self.start_epoch, self.cfg.num_epochs):
-            print('Epoch {}/{}'.format(epoch, self.cfg.num_epochs - 1))
-            print('-' * 10)
-
-            self.model.train()
 
             step_loss = 0
+            start_time = time.time()
+
             for idx, (noisy, clean) in enumerate(self.train_loader, start=1):
+                # Input/Target 
                 noisy = noisy.to(self.device, dtype=torch.float)
                 clean = clean.to(self.device, dtype=torch.float)
+
+                # BackProp
                 self.optimizer.zero_grad()
                 output = self.model(noisy)
                 loss = self.criterion(output, clean)
                 loss.backward()
                 self.optimizer.step()
+
+                # STATS
                 step_loss += loss.item()
-
                 if idx % self.cfg.verbose_step == 0:
-                    self.evaluate(tb_iter, epoch)
-                    self.writer.add_scalar("Train/Loss", step_loss / self.cfg.verbose_step, tb_iter)
-                    self.writer.add_scalar("Train/LR", self.lr_sch.get_lr()[0], tb_iter)
-                    print(f'[{tb_iter:3}/{epoch:3}/{idx:4}] Train loss: {loss:.5e}')
+                    val_loss, val_psnr = self.evaluate(self.step, epoch)
+                    self.writer.add_scalar("Loss/Train", step_loss / self.cfg.verbose_step, self.step)
+                    self.writer.add_scalar("Loss/Validation", val_loss, self.step)
+                    self.writer.add_scalar("Stats/LR", self.optimizer.param_groups[0]['lr'], self.step)
+                    self.writer.add_scalar("Stats/PSNR", val_psnr, self.step)
 
-                    tb_iter += 1
-                    step_loss = 0
-            self.lr_sch.step()
 
+                    print("[{}/{}/{}] Loss [T/V]: [{:.5f}/{:.5f}] PSNR: {:.3f} LR: {} Time: {:.1f} Output: [{}-{}]".format(
+                        epoch, self.step, idx,
+                        (step_loss/self.cfg.verbose_step), val_loss,
+                        val_psnr,
+                        self.optimizer.param_groups[0]['lr'],
+                        (time.time()-start_time),
+                        torch.min(output).item(),
+                        torch.max(output).item()
+                        ))
+
+                    self.step += 1
+                    if self.cfg.scheduler == "step":
+                        self.lr_sch.step()
+                    elif self.cfg.scheduler == "plateau":
+                        self.lr_sch.step(metrics=val_loss) 
+                    
+                    step_loss, start_time = 0, time.time()
+                    self.model.train()
+
+
+    @torch.no_grad()
     def evaluate(self, step, epoch):
         self.model.eval()
         running_loss = 0
         running_psnr = 0
-        img_counter = 0
-        with torch.no_grad():
-            for noisy, clean in self.valid_loader:
-                noisy = noisy.to(self.device, dtype=torch.float)
-                clean = clean.to(self.device, dtype=torch.float)
-                output = self.model(noisy)
-                loss = self.criterion(output, clean)
-                running_loss += loss.item()
 
-                clean = clean.cpu().detach().numpy()
-                output = np.clip(output.cpu().detach().numpy(), 0., 1.)
+        for idx, (noisy, clean) in enumerate(self.valid_loader):
+            noisy = noisy.to(self.device, dtype=torch.float)
+            clean = clean.to(self.device, dtype=torch.float)
+            output = self.model(noisy)
 
-                # ------------ PSNR ------------
-                for m in range(np.shape(clean)[0]):
-                    running_psnr += PSNR(clean[m], output[m])
-                    img_counter += 1
+            if idx == 1:
+                save_image(output, 'step_%d_output.png'%step, nrow=4)
+                save_image(clean, 'step_%d_clean.png'%step, nrow=4)
+            
+            loss = self.criterion(output, clean)
+            running_loss += loss.item()
 
-            epoch_loss = running_loss / len(self.valid_loader)
-            epoch_psnr = running_psnr / img_counter
+            clean = clean.cpu().detach().numpy()
+            output = np.clip(output.cpu().detach().numpy(), 0., 1.)
 
-            print(f'Val Loss: {epoch_loss:.3}, PSNR:{epoch_psnr:.3}')
+            # ------------ PSNR ------------
+            for m in range(self.cfg.batch_size):
+                running_psnr += PSNR(clean[m], output[m])
 
-            ckpt_name = f"epoch_{step}_val_loss_{epoch_loss:.3}_psnr_{epoch_psnr:.3}.pth"
-            self._save_ckpt(epoch, step, ckpt_name)
+        epoch_loss = running_loss / (len(self.valid_loader)*self.cfg.batch_size)
+        epoch_psnr = running_psnr / (len(self.valid_loader)*self.cfg.batch_size)
 
-            self.writer.add_scalar("Validation/Loss", epoch_loss, step)
-            self.writer.add_scalar("Validation/PSNR", epoch_psnr, step)
+        ckpt_name = f"step_{step}_epoch_{epoch}_val_loss_{epoch_loss:.3}_psnr_{epoch_psnr:.3}.pth"
+
+        self._save_ckpt(epoch, ckpt_name)
         self.model.train()
+        
+        return epoch_loss, epoch_psnr
 
-    def test(self):
-        print("Test f-n is WIP")
 
     def _load_ckpt(self):
         self.step = 1
@@ -145,38 +184,55 @@ class ImageProcessor:
         else:
             print("[!] NO checkpoint found at '{}'".format(resume_path))
 
-    def _save_ckpt(self, step, epoch, save_file):
+
+    def _save_ckpt(self, epoch, save_file):
         state = {
             'model': self.model.state_dict(),
             'optimizer': self.optimizer.state_dict(),
-            'step': step,
+            'step': self.step,
             'epoch': epoch
         }
         torch.save(state, os.path.join(self.cfg.ckpt_path, save_file))
         del state
 
-    def _load_data(self):
-        train_dataset = LoadData(self.cfg.data_dir, test=False)
-        self.train_loader = DataLoader(
-            dataset=train_dataset,
-            batch_size=self.cfg.batch_size,
-            shuffle=True,
-            num_workers=self.cfg.num_workers,
-            pin_memory=True,
-            drop_last=True
-        )
-        valid_dataset = LoadData(self.cfg.data_dir, test=True)
-        self.valid_loader = DataLoader(
-            dataset=valid_dataset,
-            batch_size=self.cfg.batch_size,
-            shuffle=True,
-            num_workers=self.cfg.num_workers,
-            pin_memory=True,
-            drop_last=True
-        )
 
-        print(f"Trainset:    {self.cfg.batch_size} x {len(self.train_loader)}")
-        print(f"Validset:    {self.cfg.batch_size} x {len(self.valid_loader)}")
+    def _load_data(self):
+
+        if not self.cfg.inference:
+            train_dataset = LoadData(self.cfg.data_dir, test=False)
+            self.train_loader = DataLoader(
+                dataset=train_dataset,
+                batch_size=self.cfg.batch_size,
+                shuffle=True,
+                num_workers=self.cfg.num_workers,
+                pin_memory=True,
+                drop_last=True    # easier to estimate PSNR, loss, etc. 
+            )
+
+            valid_dataset = LoadData(self.cfg.data_dir, test=True)
+            self.valid_loader = DataLoader(
+                dataset=valid_dataset,
+                batch_size=self.cfg.batch_size,
+                shuffle=True,
+                num_workers=self.cfg.num_workers,
+                pin_memory=True,
+                drop_last=True 
+            )
+
+            print(f"[*] Trainset:    {self.cfg.batch_size} x {len(self.train_loader)}")
+            print(f"[*] Validset:    {self.cfg.batch_size} x {len(self.valid_loader)}")
+
+        else:
+            test_dataset = LoadTestData(self.cfg.data_dir, level=2, full_resolution=False)
+            self.test_loader = DataLoader(
+                dataset=test_dataset,
+                batch_size=1,
+                shuffle=False,
+                num_workers=self.cfg.num_workers,
+                pin_memory=True,
+                drop_last=False
+            )
+
 
     def _make_dir(self):
         # Output path: ckpts, imgs, etc.
@@ -204,11 +260,13 @@ def main(cfg):
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
 
-    app = ImageProcessor(cfg.parameters)
+    app = ImageProcessor(cfg)
     app.build()
-    if not cfg.parameters.inference:
+
+    if cfg.parameters.inference:
+        app.test()
+    else:
         app.train()
-    app.test()
 
 
 if __name__ == "__main__":
