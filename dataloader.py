@@ -21,6 +21,23 @@ def extract_bayer_channels(raw):
     return RAW_norm
 
 
+class LoadTestData(Dataset):
+
+    def __init__(self, dataset_dir):
+        self.dataset_dir = dataset_dir
+
+    def __len__(self):
+        return len(glob.glob(os.path.join(self.dataset_dir, "*.png")))
+
+    def __getitem__(self, idx):
+
+        raw_image = np.asarray(imageio.imread(os.path.join(self.dataset_dir, str(idx) + '.png')), dtype=np.float32)
+        raw_image = extract_bayer_channels(raw_image)
+        raw_image = torch.from_numpy(raw_image.transpose((2, 0, 1)))
+
+        return raw_image, str(idx)
+
+
 class LoadData(Dataset):
 
     def __init__(self, dataset_dir, test=False):
@@ -66,7 +83,7 @@ class LoadData(Dataset):
         return raw_image, dslr_image / 255.
 
 
-class LoadTestData(Dataset):
+class LoadTestData_Organizer(Dataset):
 
     def __init__(self, data_dir, level, full_resolution=False):
 
