@@ -1,6 +1,5 @@
 from importlib import import_module
 
-import torch
 import torch.nn as nn
 
 '''
@@ -10,7 +9,6 @@ Losses:
 - MSE
 
 not implemented:
-- color ((cosine distance between the RGB color vectors of the predicted and target labels)
 - VGG19
 
 '''
@@ -30,8 +28,11 @@ class Loss(nn.modules.loss._Loss):
             elif loss_type == 'L1':
                 loss_function = nn.L1Loss()
             elif loss_type == 'VGG16':  # .find('VGG') >= 0:
-                module = import_module('loss.vgg')
+                module = import_module('loss.VGG16')
                 loss_function = getattr(module, 'VGG16')(resize=True)
+            elif loss_type == 'ColorLoss':
+                module = import_module('loss.ColorLoss')
+                loss_function = getattr(module, 'ColorLoss')()
 
             self.loss.append({
                 'type': loss_type,
@@ -56,9 +57,9 @@ class Loss(nn.modules.loss._Loss):
                 loss = l['function'](source, target)
                 effective_loss = l['weight'] * loss
                 losses.append(effective_loss)
-                #self.log[-1, i] += effective_loss.item()
-            #elif l['type'] == 'DIS':
-                #self.log[-1, i] += self.loss[i - 1]['function'].loss
+                # self.log[-1, i] += effective_loss.item()
+            # elif l['type'] == 'DIS':
+            # self.log[-1, i] += self.loss[i - 1]['function'].loss
 
         loss_sum = sum(losses)
 
