@@ -77,7 +77,7 @@ class ImageProcessor:
             step_loss = 0
             start_time = time.time()
 
-            for idx, (noisy, clean) in enumerate(tqdm(self.train_loader), start=1):
+            for idx, (noisy, clean) in enumerate(self.train_loader, start=1):
                 # Input/Target 
                 noisy = noisy.to(self.device, dtype=torch.float)
                 clean = clean.to(self.device, dtype=torch.float)
