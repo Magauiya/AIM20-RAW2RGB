@@ -17,7 +17,6 @@ from torch.utils.tensorboard import SummaryWriter
 import loss
 import model
 from dataloader import LoadData
-from tqdm import tqdm
 
 class ImageProcessor:
     def __init__(self, cfg):
