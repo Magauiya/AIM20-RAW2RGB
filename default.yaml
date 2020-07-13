@@ -3,12 +3,12 @@ hydra:
     dir: ./output/${parameters.model_name}_${parameters.batch_size}_${parameters.num_epochs}
 
 parameters:
-  data_dir: "/cnvrg/data" 
+  data_dir: "/cnvrg/data/" 
   resume: "put-ckpt-name"
   ckpt_path: "ckpt"
   logs_path: "log"
   loss: "1.0*L1"
-  model_name: "miniRRGNet"
+  model_name: "CAUNet"
   img_size: 512
   num_epochs: 100
   batch_size: 16
