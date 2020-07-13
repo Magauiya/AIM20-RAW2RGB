@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 
 # my files
 import model
-from dataloader import LoadTestData
+from dataloader import LoadData
 
 
 class ImageProcessor:
@@ -30,7 +30,7 @@ class ImageProcessor:
         model_name = self.cfg.model_name
 
         if model_name not in dir(model):
-            model_name = "RRGNet"
+            model_name = "RRDUNet"
 
         print(f"[*] Model: {self.cfg.model_name}")
         self.model = getattr(model, model_name)(cfg=self.cfg).to(self.device)
@@ -90,7 +90,7 @@ class ImageProcessor:
 
 
     def _load_ckpt(self):
-        resume_path = os.path.join("../ckpts", self.cfg.resume)
+        resume_path = os.path.join(self.cfg.resume)
         if resume_path and os.path.exists(resume_path):
             print("[&] LOADING CKPT {resume_path}")
             checkpoint = torch.load(resume_path, map_location='cpu')
@@ -103,7 +103,7 @@ class ImageProcessor:
 
 
     def _load_data(self):
-        test_dataset = LoadTestData(self.cfg.test_dir)
+        test_dataset = LoadData(self.cfg.test_dir)
         self.test_loader = DataLoader(
             dataset=test_dataset,
             batch_size=1,

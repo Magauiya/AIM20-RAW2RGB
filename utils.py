@@ -3,7 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-## For UNet
+#References: 
+# UNet Pytorch: https://github.com/milesial/Pytorch-UNet/blob/master/unet/unet_parts.py
+# CyCleISP: https://github.com/swz30/CycleISP/blob/master/networks/cycleisp.py
 
 class DoubleConv(nn.Module):
     """(convolution => [BN] => ReLU) * 2"""
@@ -21,20 +23,6 @@ class DoubleConv(nn.Module):
 
     def forward(self, x):
         return self.double_conv(x)
-
-
-class Down(nn.Module):
-    """Downscaling with maxpool then double conv"""
-
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.maxpool_conv = nn.Sequential(
-            nn.MaxPool2d(2),
-            DoubleConv(in_channels, out_channels)
-        )
-
-    def forward(self, x):
-        return self.maxpool_conv(x)
 
 
 class Up(nn.Module):
@@ -57,43 +45,7 @@ class Up(nn.Module):
         return self.conv(x)
 
 
-class OutConv(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(OutConv, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
-
-    def forward(self, x):
-        return self.conv(x)
-
-
-class DCR_block(nn.Module):
-    def __init__(self, channel_in):
-        super(DCR_block, self).__init__()
-
-        self.conv_1 = nn.Conv2d(in_channels=channel_in, out_channels=int(channel_in / 2.), kernel_size=3, stride=1,
-                                padding=1)
-        self.relu1 = nn.PReLU()
-        self.conv_2 = nn.Conv2d(in_channels=int(channel_in * 3 / 2.), out_channels=int(channel_in / 2.), kernel_size=3,
-                                stride=1, padding=1)
-        self.relu2 = nn.PReLU()
-        self.conv_3 = nn.Conv2d(in_channels=channel_in * 2, out_channels=channel_in, kernel_size=3, stride=1, padding=1)
-        self.relu3 = nn.PReLU()
-
-    def forward(self, x):
-        residual = x
-
-        out = self.relu1(self.conv_1(x))
-        conc = torch.cat([x, out], 1)
-        out = self.relu2(self.conv_2(conc))
-        conc = torch.cat([conc, out], 1)
-        out = self.relu3(self.conv_3(conc))
-        out = torch.add(out, residual)
-        return out
-
-
 ''' For Raw2Rgb '''
-
-
 def conv(in_channels, out_channels, kernel_size, bias=True, padding=1, stride=1):
     return nn.Conv2d(
         in_channels, out_channels, kernel_size,
