@@ -18,7 +18,6 @@ import loss
 import model
 from dataloader import LoadData
 
-
 class ImageProcessor:
     def __init__(self, cfg):
         self.cfg = cfg.parameters
