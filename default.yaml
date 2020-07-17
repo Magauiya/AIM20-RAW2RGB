@@ -43,7 +43,8 @@ plateau:
 
 test:
   batch_size: 1
-  test_dir: "/data/ntire20-datasetnoise/"
+  test_dir: "/data/ntire20-datasetnoise/AIM2020_ISP_test_raw"
+  full_resolution_test_dir: "/data/ntire20-datasetnoise/AIM2020_ISP_fullres_test_raw"
   output_dir: "/cnvrg/data"
   subfile: "input"
   model_name: "RRGUNet"
