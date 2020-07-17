@@ -1,17 +1,13 @@
 import os
 import time
-import random
-import numpy as np
-from PIL import Image
 
 # Hydra <- yaml
 import hydra
 import numpy as np
-
 # PyTorch
 import torch
 import torch.nn as nn
-
+from PIL import Image
 from torch.utils.data import DataLoader
 
 # my files
@@ -30,20 +26,20 @@ class ImageProcessor:
         model_name = self.cfg.model_name
 
         if model_name not in dir(model):
-            model_name = "RRGNet"
+            model_name = "RRDUNet"
 
         print(f"[*] Model: {self.cfg.model_name}")
         self.model = getattr(model, model_name)(cfg=self.cfg).to(self.device)
         self.model = nn.DataParallel(self.model)
-        
+
         self._load_ckpt()
         self._load_data()
-        
+
     def inference(self):
         self.model.eval()
 
         if not os.path.exists(os.path.join(self.cfg.output_dir, self.cfg.subfile)):
-            os.mkdir(self.cfg.output_dir+self.cfg.subfile)
+            os.mkdir(self.cfg.output_dir + self.cfg.subfile)
 
         start = time.time()
         with torch.no_grad():
@@ -65,14 +61,14 @@ class ImageProcessor:
                     output /= 8
 
                 output = np.clip(output.cpu().detach().numpy(), 0., 1.)
-                output = 255.*np.squeeze(output).transpose((1, 2, 0))
+                output = 255. * np.squeeze(output).transpose((1, 2, 0))
                 output = output.astype(np.uint8)
 
                 img = Image.fromarray(output)
                 img.save(f"{os.path.join(self.cfg.output_dir, self.cfg.subfile)}/{img_name[0]}.png")
                 print(f"[{idx}] range: [{np.amin(output)} {np.amax(output)}]", end="\r")
 
-        runtime = (time.time()-start) / len(self.test_loader)
+        runtime = (time.time() - start) / len(self.test_loader)
 
         print(f"[*] Inference is done! Total time: {runtime} per img")
 
@@ -87,10 +83,8 @@ class ImageProcessor:
             readme_file.write('Metadata[1] / No Metadata[0]: %s\n' % str(use_metadata))
             readme_file.write('Other description: %s\n' % str(other))
 
-
-
     def _load_ckpt(self):
-        resume_path = os.path.join("../ckpts", self.cfg.resume)
+        resume_path = os.path.join(self.cfg.resume)
         if resume_path and os.path.exists(resume_path):
             print("[&] LOADING CKPT {resume_path}")
             checkpoint = torch.load(resume_path, map_location='cpu')
@@ -100,7 +94,6 @@ class ImageProcessor:
             torch.cuda.empty_cache()
         else:
             print("[!] NO checkpoint found at '{}'".format(resume_path))
-
 
     def _load_data(self):
         test_dataset = LoadTestData(self.cfg.test_dir)
@@ -117,7 +110,6 @@ class ImageProcessor:
 
 @hydra.main(config_path="./default.yaml")
 def main(cfg):
-
     app = ImageProcessor(cfg.test)
     app.build()
     app.inference()

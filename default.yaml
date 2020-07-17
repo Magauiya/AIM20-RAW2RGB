@@ -3,12 +3,12 @@ hydra:
     dir: ./output/${parameters.model_name}_${parameters.batch_size}_${parameters.num_epochs}
 
 parameters:
-  data_dir: "/data/ntire20-datasetnoise/" 
+  data_dir: "/cnvrg/data/" 
   resume: "put-ckpt-name"
   ckpt_path: "ckpt"
   logs_path: "log"
   loss: "1.0*L1"
-  model_name: "RRDUNet"
+  model_name: "CAUNet"
   img_size: 512
   num_epochs: 100
   batch_size: 16
@@ -23,7 +23,7 @@ parameters:
   optim_reset: False
   in_channel: 4
   out_channel: 3
-  scheduler: "step"
+  scheduler: "plateau"
   net_verbose: False
 
 steplr:
@@ -40,14 +40,15 @@ plateau:
   cooldown: 0
   min_lr: 5.e-6
   eps: 1.e-8
-  
+
 test:
   batch_size: 1
-  test_dir: "/root/aim20/data/validation/input"
-  output_dir: "/root/aim20/submissions/"
-  subfile: "rrgnet_vanilla"
-  model_name: "RRGNet"
-  resume: "epoch_74_val_loss_0.0756_psnr_20.8.pth"
+  test_dir: "/data/ntire20-datasetnoise/AIM2020_ISP_test_raw"
+  full_resolution_test_dir: "/data/ntire20-datasetnoise/AIM2020_ISP_fullres_test_raw"
+  output_dir: "/cnvrg/data"
+  subfile: "input"
+  model_name: "RRGUNet"
+  resume: "ckpts/step_154_epoch_27_val_loss_0.00442_psnr_21.2.pth"
   in_channel: 4
   out_channel: 3
   num_workers: 12

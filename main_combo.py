@@ -8,7 +8,6 @@ from skimage.measure import compare_psnr as PSNR
 # PyTorch
 import torch
 import torch.nn as nn
-from torchsummary import summary
 from torch.optim import lr_scheduler
 from torchvision.utils import save_image
 from torch.utils.data import DataLoader
@@ -17,7 +16,8 @@ from torch.utils.tensorboard import SummaryWriter
 # OWN
 import loss
 import model
-from dataloader import LoadDataSecond
+from dataloader import LoadData
+
 
 class ImageProcessor:
     def __init__(self, cfg):
@@ -31,7 +31,7 @@ class ImageProcessor:
         # MODEL
         model_name = self.cfg.model_name
         if model_name not in dir(model):
-            model_name = "RRDUNet"
+            model_name = "miniRRGNet"
         self.model = getattr(model, model_name)(cfg=self.cfg).to(self.device)
         self.model = nn.DataParallel(self.model)
         if self.cfg.net_verbose:
@@ -199,7 +199,7 @@ class ImageProcessor:
     def _load_data(self):
 
         if not self.cfg.inference:
-            train_dataset = LoadDataSecond(self.cfg.data_dir, test=False)
+            train_dataset = LoadData(self.cfg.data_dir, test=False)
             self.train_loader = DataLoader(
                 dataset=train_dataset,
                 batch_size=self.cfg.batch_size,
@@ -209,7 +209,7 @@ class ImageProcessor:
                 drop_last=True    # easier to estimate PSNR, loss, etc. 
             )
 
-            valid_dataset = LoadDataSecond(self.cfg.data_dir, test=True)
+            valid_dataset = LoadData(self.cfg.data_dir, test=True)
             self.valid_loader = DataLoader(
                 dataset=valid_dataset,
                 batch_size=self.cfg.batch_size,
