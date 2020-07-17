@@ -162,7 +162,6 @@ class spatial_attn_layer(nn.Module):
 class RRG(nn.Module):
     def __init__(self, conv, n_feat, kernel_size, reduction, act, num_dab):
         super(RRG, self).__init__()
-        modules_body = []
         modules_body = [
             DAB(
                 conv, n_feat, kernel_size, reduction, bias=True, bn=False, act=act) \
